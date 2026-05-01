@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <windows.graphics.capture.h>
 
 using Microsoft::WRL::ComPtr;
 
@@ -31,7 +32,13 @@ private:
     ComPtr<ID3D11Texture2D> m_cachedTexture;
     bool m_hasFrame = false;
 
+    // WGC 捕获
     bool InitWGC(int displayIndex);
+    bool m_wgcActive = false;
+    ComPtr<IDirect3D11CaptureFramePool> m_framePool;
+    ComPtr<IGraphicsCaptureSession> m_captureSession;
+
+    // 模拟帧备用
     bool UpdateSimulatedFrame(ID3D11DeviceContext* ctx);
 
     ComPtr<IDXGIDevice> m_dxgiDevice;

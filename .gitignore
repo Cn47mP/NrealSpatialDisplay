@@ -1,0 +1,55 @@
+# Build output
+build/
+build*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Compiled
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.iobj
+*.ipdb
+*.tlog
+*.log
+*.lastbuildstate
+*.recipe
+*.cso
+
+# ImGui runtime
+imgui.ini
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Debug/
+Release/
+x64/
+x86/
+ipch/
+*.aps
+*.ncb
+*.sdf
+*.opensdf
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Scripts used once
+build.ps1
+build2.ps1
+runbuild.bat
+NrealSpatialDisplay_DevDoc.md

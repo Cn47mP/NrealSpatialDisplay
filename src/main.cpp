@@ -2,7 +2,7 @@
 // WinMain 入口点
 
 #include "app/Application.h"
-#include "core/Log.h"
+#include "utils/Log.h"
 
 #include <Windows.h>
 #include <cstdlib>

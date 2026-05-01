@@ -2,8 +2,8 @@
 // NrealSpatialDisplay: AR 多虚拟屏空间锚定系统
 
 #include "Application.h"
-#include "core/Log.h"
-#include "core/AppConfig.h"
+#include "utils/Log.h"
+#include "app/AppConfig.h"
 #include "layout/LayoutEngine.h"
 #include "layout/LayoutPreset.h"
 #include "render/D3DRenderer.h"
@@ -12,7 +12,7 @@
 #include "imu/NrealLightIMU.h"
 #include "gui/SettingsGUI.h"
 #include "display/DisplaySwitcher.h"
-#include "stream/UnityStream.h"
+#include "network/UnityStream.h"
 #include "render/Camera.h"
 
 #include <chrono>
