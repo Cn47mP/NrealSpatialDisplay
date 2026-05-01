@@ -1,43 +1,50 @@
+// NrealSpatialDisplay - AR 多虚拟屏空间锚定系统
+// WinMain 入口点
+
 #include "app/Application.h"
-#include "utils/Log.h"
-#include <windows.h>
+#include "core/Log.h"
 
-int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
-    char exePath[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, exePath, sizeof(exePath));
-    char* slash = strrchr(exePath, '\\');
-    if (slash) *slash = '\0';
+#include <Windows.h>
+#include <cstdlib>
+#include <cstdio>
 
-    std::string logDir = std::string(exePath) + "\\logs";
-    Log::Init(logDir);
-
-    LOG_INFO("=== NrealSpatialDisplay starting ===");
-    LOG_INFO("Executable: %s", exePath);
-    LOG_INFO("Log dir: %s", logDir.c_str());
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+{
+    // 打开调试控制台，用于输出日志
+    AllocConsole();
+    FILE* fp = nullptr;
+    freopen_s(&fp, "CONOUT$", "w", stdout);
+    freopen_s(&fp, "CONOUT$", "w", stderr);
+    freopen_s(&fp, "CONIN$", "r", stdin);
 
     Application app;
 
-    if (!app.Init()) {
-        LOG_ERROR("Application init failed");
-        Log::Shutdown();
-        MessageBoxA(nullptr, "Init failed - check logs folder", "Error", MB_OK);
+    // 初始化应用：D3D、捕获、IMU、GUI 等全部子系统
+    if (!app.Init())
+    {
+        MessageBoxW(nullptr, L"应用初始化失败，请检查日志文件。", L"NrealSpatialDisplay", MB_OK | MB_ICONERROR);
         return 1;
     }
 
-    LOG_INFO("Application initialized, entering main loop");
-
+    // 主消息循环：空闲时执行渲染 Tick
     MSG msg = {};
-    while (msg.message != WM_QUIT) {
-        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+    while (true)
+    {
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (msg.message == WM_QUIT)
+                goto quit;
             TranslateMessage(&msg);
             DispatchMessage(&msg);
-        } else {
-            app.Tick();
         }
+        app.Tick();
     }
 
+quit:
     app.Shutdown();
-    LOG_INFO("=== NrealSpatialDisplay exiting ===");
-    Log::Shutdown();
-    return 0;
+
+    if (fp) fclose(fp);
+    FreeConsole();
+
+    return static_cast<int>(msg.wParam);
 }
