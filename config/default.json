@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "imu": {
+    "enabled": true,
+    "smoothing": 0.15,
+    "deadzone_deg": 0.5,
+    "autoDriftCompensation": false
+  },
+  "displays": {
+    "nrealName": "light",
+    "virtualCount": 3,
+    "virtualResolution": { "width": 1920, "height": 1080 }
+  },
+  "layout": {
+    "preset": "triple",
+    "viewerDistance": 2.0,
+    "screens": [
+      {
+        "captureIndex": 1,
+        "name": "左屏",
+        "position": [-0.75, 0, -1.5],
+        "rotation": [0, 30, 0],
+        "size": [0.6, 0.3375],
+        "curvature": 0
+      },
+      {
+        "captureIndex": 2,
+        "name": "主屏幕",
+        "position": [0, 0, -2.0],
+        "rotation": [0, 0, 0],
+        "size": [0.8, 0.45],
+        "curvature": 0
+      },
+      {
+        "captureIndex": 3,
+        "name": "右屏",
+        "position": [0.75, 0, -1.5],
+        "rotation": [0, -30, 0],
+        "size": [0.6, 0.3375],
+        "curvature": 0
+      }
+    ]
+  },
+  "rendering": {
+    "vsync": true,
+    "showBorders": true,
+    "borderColor": [0.3, 0.3, 0.3],
+    "borderWidth": 0.005,
+    "backgroundColor": [0.02, 0.02, 0.04]
+  },
+  "hud": {
+    "enabled": true,
+    "hotkeyVk": 116,
+    "showFps": true,
+    "showLatency": true,
+    "showImu": true,
+    "showCapture": true,
+    "showLayout": true
+  },
+  "hotkeys": [
+    { "name": "preset_single",  "label": "切换单屏",      "vk": 49,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "preset_dual",    "label": "切换双屏",      "vk": 50,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "preset_triple",  "label": "切换三屏",      "vk": 51,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "preset_five",    "label": "切换五屏",      "vk": 53,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "toggle_imu",     "label": "切换 IMU",      "vk": 73,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "reset_view",     "label": "重置视角",      "vk": 82,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "screenshot",     "label": "截图",          "vk": 83,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "quit",           "label": "退出程序",      "vk": 81,  "ctrl": true,  "alt": true,  "shift": false },
+    { "name": "toggle_gui",     "label": "显示/隐藏面板", "vk": 112, "ctrl": false, "alt": false, "shift": false },
+    { "name": "toggle_preview", "label": "显示/隐藏预览", "vk": 114, "ctrl": false, "alt": false, "shift": false },
+    { "name": "toggle_hud",     "label": "显示/隐藏 HUD", "vk": 116, "ctrl": false, "alt": false, "shift": false },
+    { "name": "toggle_headlock","label": "切换锁定模式",  "vk": 115, "ctrl": false, "alt": false, "shift": false }
+  ]
+}

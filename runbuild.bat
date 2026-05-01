@@ -1,0 +1,2 @@
+@echo off
+"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" "C:\Users\Cn47mP\Desktop\NrealSpatialDisplay\build\NrealSpatialDisplay.sln" /p:Configuration=Release /p:Platform=x64 /v:minimal
