@@ -1,192 +1,245 @@
 # NrealSpatialDisplay
 
-Nreal Light 多虚拟屏空间锚定系统 —— 将多个虚拟显示器固定在 3D 空间中，通过头部转动查看不同屏幕。
+> Nreal Light 多虚拟屏空间锚定系统 — 将多个虚拟显示器固定在 3D 空间中，通过头部转动查看不同屏幕
 
-## 功能特性
+[![Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)]()
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)]()
+[![License](https://img.shields.io/badge/License-MIT-green)]()
 
-- **多虚拟屏**：支持 1/2/3/5 屏及曲面超宽屏布局
-- **空间锚定**：屏幕固定在 3D 空间中，转头查看不同方向
-- **IMU 驱动**：实时读取 Nreal Light IMU 数据（四元数）
-- **DXGI 捕获**：低延迟桌面画面捕获
-- **D3D11 渲染**：硬件加速多屏合成
-- **布局引擎**：JSON 配置 + 预设布局 + 实时调整
-- **设置面板**：Dear ImGui 中文 GUI，实时调整所有参数
-- **预览窗口**：主显示器实时预览眼镜画面
-- **性能 HUD**：预览窗口叠加 FPS/延迟/IMU 等信息
-- **可配置热键**：所有热键均支持自定义修改
-- **系统托盘**：最小化到托盘，右键菜单切换布局
-- **截图**：离屏纹理直接保存为 BMP
+支持 **World Lock / Head Lock** 两种模式，IMU 漂移校正，屏幕吸附对齐，曲面屏显示。中文 GUI，全热键可自定义。
 
-## 硬件要求
+---
 
-- Windows PC
-- Nreal Light (USB-C 连接)
-- Virtual Display Driver
+## ✨ 特性
 
-## 依赖
+- **多虚拟屏空间锚定** — 最多 5 块虚拟屏幕锚定在 3D 空间中，转头即可查看不同方向
+- **5 种预设布局** — 单屏 / 双屏 / 三屏环绕 / 五屏弧形 / 曲面超宽屏
+- **双锁定模式** — World Lock（屏幕固定空间）+ Head Lock（屏幕跟随头部）
+- **IMU 漂移校正** — 手动重置 + 自动低通滤波补偿
+- **曲面屏支持** — 可调曲率的弧形屏幕网格生成
+- **屏幕吸附对齐** — 移动屏幕时自动吸附到相邻屏幕边缘
+- **每屏独立分辨率** — 每块虚拟屏可设置不同的分辨率
+- **实时性能 HUD** — FPS、端到端延迟、IMU 状态、捕获状态叠加显示
+- **中文设置面板** — 基于 Dear ImGui 的全中文 GUI，7 个标签页覆盖所有参数
+- **热键冲突检测** — 可视化热键配置，实时冲突检测与提示
+- **系统托盘** — 最小化到托盘，右键快速切换布局
+- **截图** — 一键保存当前眼镜画面为 BMP
 
-| 组件 | 来源 |
-|---|---|
-| AirAPI_Windows.dll | https://github.com/MSmithDev/AirAPI_Windows/releases |
-| hidapi.dll | https://github.com/libusb/hidapi/releases |
-| Virtual Display Driver | https://github.com/19980202yyq/Virtual-Display-Driver |
-| nlohmann/json | https://github.com/nlohmann/json/releases |
-| Dear ImGui | 自动下载 |
+---
 
-## 构建
+## 📐 架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Windows PC                                │
+│                                                                  │
+│  Virtual Display Driver ──→ N 个虚拟显示器                        │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
+│  │ WCG 桌面捕获  │  │ AirAPI IMU   │  │ D3D11 渲染引擎         │ │
+│  │ (每屏一个)    │  │ 四元数 250Hz │  │ 离屏 RT → Blit        │ │
+│  └──────┬───────┘  └──────┬───────┘  │ → 眼镜 SwapChain      │ │
+│         │                  │          │ → 预览 SwapChain       │ │
+│         └──────────┬───────┘          │ → HUD 叠加             │ │
+│                    │                  └────────────────────────┘ │
+│           ┌────────▼────────┐                                    │
+│           │  Layout Engine  │  3D 空间布局 + 吸附对齐             │
+│           │  Camera (IMU)   │  World Lock / Head Lock            │
+│           └─────────────────┘                                    │
+│                                                                  │
+│  ┌─────────────┐  ┌──────────────┐                               │
+│  │ 预览窗口     │  │ 系统托盘      │                               │
+│  │ + HUD       │  │ + 设置面板    │                               │
+│  └─────────────┘  └──────────────┘                               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                    USB-C (1920×1080, 52° FOV)
+                              │
+                    ┌─────────▼─────────┐
+                    │   Nreal Light      │
+                    └────────────────────┘
+```
+
+---
+
+## 🛠 依赖
+
+| 组件 | 来源 | 用途 |
+|---|---|---|
+| AirAPI_Windows.dll | [MSmithDev/AirAPI_Windows](https://github.com/MSmithDev/AirAPI_Windows/releases) | 读取 Nreal IMU 数据 |
+| hidapi.dll | [libusb/hidapi](https://github.com/libusb/hidapi/releases) | USB HID 通信 |
+| Virtual Display Driver | [19980202yyq/Virtual-Display-Driver](https://github.com/19980202yyq/Virtual-Display-Driver) | 创建虚拟显示器 |
+| Dear ImGui | [ocornut/imgui](https://github.com/ocornut/imgui) | 设置面板 GUI（自动下载） |
+| nlohmann/json | [nlohmann/json](https://github.com/nlohmann/json) | JSON 配置解析 |
+| VirtualDesktopAccessor（可选） | [Ciantic/VirtualDesktopAccessor](https://github.com/Ciantic/VirtualDesktopAccessor) | 虚拟桌面切换 |
+
+---
+
+## 🚀 快速开始
+
+### 前置条件
+
+- Windows 10/11（1803+）
+- Visual Studio 2022（C++17）
+- NVIDIA 显卡（驱动 ≥ 530，推荐 Studio 驱动）
+- Nreal Light 通过 USB-C 连接
+- Virtual Display Driver 已安装
+
+### 构建
 
 ```bash
-# 1. 下载 ImGui
+# 1. 下载 ImGui 源码
 cd src/gui && bash download_imgui.sh && cd ../..
 
-# 2. 放置依赖 DLL 到 lib/
+# 2. 放置依赖到 lib/
+#    - AirAPI_Windows.dll + .lib + .h
+#    - hidapi.dll
+#    - json.hpp (nlohmann)
+#    - VirtualDesktopAccessor.dll（可选）
 
-# 3. 构建
+# 3. CMake 构建
 mkdir build && cd build
 cmake .. -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
+```
 
-# 4. 运行
+### 运行
+
+```bash
+# 管理员权限运行
 NrealSpatialDisplay.exe
 ```
 
-## 快捷键（默认值，可在 GUI 中自定义）
+1. 程序自动查找 Nreal Light 显示器，找不到则进入窗口开发模式
+2. 系统托盘出现图标，右键可切换布局
+3. 按 **F1** 打开设置面板调整参数
+4. 按 **F3** 打开预览窗口查看眼镜画面
+5. 将应用窗口拖到虚拟显示器上，眼镜中即可看到多屏空间布局
+6. 转头查看不同方向的屏幕
+
+---
+
+## ⌨️ 快捷键
 
 | 快捷键 | 功能 |
 |---|---|
-| F1 | 显示/隐藏设置面板 |
-| F3 | 显示/隐藏预览窗口 |
-| F4 | 切换 Head Lock / World Lock |
-| F5 | 显示/隐藏 HUD |
-| Ctrl+Alt+1 | 单屏模式 |
-| Ctrl+Alt+2 | 双屏模式 |
-| Ctrl+Alt+3 | 三屏模式 |
-| Ctrl+Alt+5 | 五屏弧形 |
-| Ctrl+Alt+I | 切换 IMU |
-| Ctrl+Alt+R | 重置视角 + 漂移校正 |
-| Ctrl+Alt+S | 截图 |
-| Ctrl+Alt+Q | 退出 |
+| `F1` | 显示/隐藏设置面板 |
+| `F3` | 显示/隐藏预览窗口 |
+| `F4` | 切换 Head Lock / World Lock |
+| `F5` | 显示/隐藏 HUD |
+| `Ctrl+Alt+1` | 单屏模式 |
+| `Ctrl+Alt+2` | 双屏模式 |
+| `Ctrl+Alt+3` | 三屏环绕 |
+| `Ctrl+Alt+5` | 五屏弧形 |
+| `Ctrl+Alt+I` | 切换 IMU |
+| `Ctrl+Alt+R` | 重置视角 + 漂移校正 |
+| `Ctrl+Alt+S` | 截图（BMP） |
+| `Ctrl+Alt+Q` | 退出程序 |
+| `Ctrl+Alt+↑/↓` | 亮度调节 |
 
-## 设置面板 (F1)
+所有热键可在 GUI 中自定义，支持冲突检测。
 
-所有设置项均有中文说明，鼠标悬停 `(?)` 查看详细解释。
+---
 
-| 标签页 | 设置项 |
-|---|---|
-| 布局 | 预设选择（5种）、观察距离、重置/保存/退出 |
-| 屏幕编辑 | 名称、捕获索引、位置XYZ、旋转PYR、尺寸宽高、曲率、快捷操作按钮 |
-| IMU | 开关、平滑系数、死区、实时角度可视化条 |
-| 渲染 | VSync、边框开关/宽度/颜色、背景色、固定参数显示 |
-| 显示器 | 名称、虚拟屏数量、虚拟分辨率 |
-| HUD | 开关、显示项目（FPS/IMU/捕获/布局）、热键绑定 |
-| 快捷键 | 所有热键可视化配置、Ctrl/Alt/Shift 修饰键、**冲突检测**（红色高亮+提示） |
-
-## 热键冲突检测
-
-## 预览窗口 (F3)
-
-- 主显示器置顶窗口，实时显示眼镜画面
-- 可拖动移动
-- 关闭不影响眼镜输出
-
-## 性能 HUD (F5)
-
-预览窗口左上角叠加显示：
-- FPS / 帧延迟
-- 布局名称 / 屏幕数量
-- IMU 连接状态 / Pitch Yaw Roll
-- 捕获源数量
-- 渲染状态（运行中/已暂停）
-
-## 热键冲突检测
-
-快捷键标签页自动检测冲突：
-- 冲突按键显示 **红色高亮** + `⚠` 标记
-- 鼠标悬停查看冲突详情
-- 顶部显示冲突数量统计
-- 录制新键时自动拒绝已绑定的组合
-- 修饰键（Ctrl/Alt/Shift）勾选时实时检测冲突
-- 无冲突时显示 `✓ 无热键冲突`
-
-## 核心特性
-
-### 空间锚定 (World Lock)
-屏幕固定在 3D 空间中，转头看到不同方向的屏幕。这是默认模式。
-
-### Head Lock (F4)
-屏幕跟随头部转动，像 HUD 一样始终在视野前方。适合单屏专注工作。
-按 F4 切换模式，状态栏和 HUD 会显示当前模式。
-
-### IMU 漂移校正
-长时间使用后 IMU 可能产生缓慢的 yaw 漂移：
-- **手动校正**：按 `Ctrl+Alt+R` 将当前朝向重置为零点
-- **自动补偿**：在 IMU 设置中开启「自动漂移补偿」，系统自动检测并修正缓慢偏移
-
-### 屏幕吸附对齐
-在屏幕编辑器中移动屏幕时，会自动吸附到相邻屏幕的边缘（上下左右前后），辅助精确排列。
-
-### 每屏独立分辨率
-每个虚拟屏幕可以设置独立的捕获分辨率（在屏幕编辑器中），适合不同屏幕需要不同清晰度的场景。设为 0 则使用全局默认值。
-
-## 渲染架构
-
-```
-场景渲染 → 离屏纹理 → ┬→ Blit → 眼镜 SwapChain → Present
-                       └→ Blit → 预览 BackBuffer
-                                      ↓
-                                  HUD 叠加渲染
-                                      ↓
-                                  Present 预览
-```
-
-## 系统托盘
-
-程序最小化到系统托盘，右键菜单提供：
-- 切换布局（5 种预设，带当前选中标记）
-- 打开设置面板 / 预览窗口
-- 截图
-- 暂停/启动渲染
-- 退出
-
-双击托盘图标显示/隐藏设置面板。
-
-## 截图
-
-按 `Ctrl+Alt+S` 或从托盘菜单触发，将当前眼镜画面保存为 BMP 文件（`screenshot_YYYYMMDD_HHMMSS.bmp`）。
-
-## 项目结构
+## 📁 项目结构
 
 ```
 NrealSpatialDisplay/
 ├── CMakeLists.txt
-├── config/default.json           # 含热键 + HUD 配置
-├── lib/                          # 依赖 DLL
+├── config/
+│   └── default.json                # 配置文件
+├── lib/                            # 依赖库
 ├── src/
-│   ├── main.cpp
-│   ├── app/
-│   │   ├── Application.cpp/h     # 主应用（可配置热键 + 预览 + HUD）
-│   │   └── AppConfig.cpp/h       # 配置（含 HotkeyEntry + HudConfig）
-│   ├── gui/
-│   │   ├── SettingsGUI.cpp/h     # GUI（热键编辑 + HUD 设置 + 预览 HUD）
-│   │   ├── ImGuiSetup.h
-│   │   ├── download_imgui.sh
-│   │   └── imgui/                # [自动下载]
-│   ├── imu/
-│   │   ├── AirIMU.cpp/h
-│   │   └── ImuFilter.cpp/h
-│   ├── capture/
-│   │   ├── DisplayCapture.cpp/h
-│   │   └── CaptureManager.cpp/h
-│   ├── render/
-│   │   ├── D3DRenderer.cpp/h     # 离屏 RT + 双 SwapChain + Blit
-│   │   ├── ScreenQuad.cpp/h
-│   │   ├── Camera.cpp/h
-│   │   └── shaders/
-│   ├── layout/
-│   │   ├── LayoutEngine.cpp/h
-│   │   └── LayoutPreset.cpp/h
-│   └── utils/
-│       ├── ComHelper.cpp/h
-│       └── Log.cpp/h
+│   ├── main.cpp                    # WinMain 入口
+│   ├── app/                        # 应用主体（托盘、热键、配置）
+│   ├── gui/                        # ImGui 设置面板 + HUD
+│   ├── imu/                        # IMU 读取 + 滤波 + 漂移校正
+│   ├── capture/                    # WCG 桌面捕获
+│   ├── render/                     # D3D11 渲染引擎 + 着色器
+│   ├── layout/                     # 3D 布局引擎 + 预设
+│   └── utils/                      # COM 辅助 + 日志
 └── README.md
 ```
+
+---
+
+## 🎮 布局预设
+
+| 预设 | 屏幕数 | 描述 | 观察距离 |
+|---|---|---|---|
+| single | 1 | 单屏正对前方 | 2.0m |
+| dual | 2 | 左右双屏微展 20° | 1.8m |
+| triple | 3 | 左中右三屏环绕（±30°） | 1.5~2.0m |
+| five-arc | 5 | 五屏弧形（±50° / ±25° / 0°） | 1.0~2.0m |
+| curved-ultrawide | 1 | 曲面超宽屏（1.6m 宽，曲率 0.4） | 1.8m |
+
+---
+
+## 🔧 配置
+
+配置文件位于 `config/default.json`，包含以下模块：
+
+```jsonc
+{
+  "version": 1,
+  "imu": {
+    "enabled": true,
+    "smoothing": 0.15,           // 平滑系数 (0.10~0.20)
+    "deadzone_deg": 0.5,         // 死区阈值 (0.3°~1.0°)
+    "autoDriftCompensation": false
+  },
+  "displays": {
+    "nrealName": "light",
+    "virtualCount": 3,
+    "virtualResolution": { "width": 1920, "height": 1080 }
+  },
+  "layout": {
+    "preset": "triple",
+    "viewerDistance": 2.0,
+    "screens": [ /* 每屏的 position、rotation、size、curvature */ ]
+  },
+  "rendering": {
+    "vsync": true,
+    "showBorders": true,
+    "sharpenEnabled": false,
+    "sharpenStrength": 0.5
+  },
+  "hotkeys": [ /* 可自定义热键绑定 */ ]
+}
+```
+
+所有配置均可通过 GUI 设置面板修改，无需手动编辑 JSON。
+
+---
+
+## 🐛 故障排查
+
+| 问题 | 排查方向 |
+|---|---|
+| 眼镜黑屏 | 检查 USB 连接（VID_3318）、Windows 显示设置、日志中 SwapChain 错误 |
+| 画面卡顿 | 查看 GPU 占用、尝试关闭 VSync、切换平面布局对比 |
+| 头部转动无反应 | 检查 HID 设备、IMU 开关、HUD 中 P/Y/R 数值是否变化 |
+| 屏幕位置错乱 | 检查配置文件 captureIndex、重置布局 |
+| 热键无响应 | 检查冲突标记、关闭其他全局热键程序、管理员权限运行 |
+
+日志文件位于 `logs/nreal_YYYY-MM-DD.log`，按天滚动，自动保留 7 天。快速排查：搜索 `ERROR` 和 `WARN` 条目。
+
+---
+
+## 🆚 竞品对比
+
+| 功能 | GingerXR | VertoXR | **NrealSpatialDisplay** |
+|---|---|---|---|
+| 多虚拟屏空间锚定 | ✅ | ✅ | ✅ |
+| 曲面屏 | ✅ | ✅ | ✅ |
+| IMU 漂移校正 | ✅ | ✅ | ✅ 手动+自动 |
+| Head Lock | ✅ | ✅ | ✅ |
+| 中文 GUI | ❌ | ❌ | ✅ |
+| 热键冲突检测 | ❌ | ❌ | ✅ |
+| **开源** | ❌ | ❌ | ✅ |
+
+---
+
+## 📄 License
+
+MIT
