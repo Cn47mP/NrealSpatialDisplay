@@ -154,7 +154,27 @@ int AirIMU::GetBrightness() {
 }
 
 bool AirIMU::SetBrightness(int level) {
-    LOG_INFO("AirIMU: Brightness control not implemented");
+    if (level < 0) level = 0;
+    if (level > 100) level = 100;
+
+    typedef int(*SetBrightnessAPI_t)(int);
+    static SetBrightnessAPI_t pSetBrightness = nullptr;
+
+    if (!pSetBrightness && m_airAPIDll) {
+        pSetBrightness = (SetBrightnessAPI_t)GetProcAddress(m_airAPIDll, "SetBrightness");
+    }
+
+    if (pSetBrightness) {
+        int result = pSetBrightness(level);
+        if (result >= 0) {
+            LOG_INFO("AirIMU: Brightness set to %d%%", level);
+            return true;
+        }
+        LOG_WARN("AirIMU: SetBrightness(%d) returned %d", level, result);
+        return false;
+    }
+
+    LOG_WARN("AirIMU: SetBrightness not available in AirAPI DLL");
     return false;
 }
 
