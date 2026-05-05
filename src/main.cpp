@@ -18,9 +18,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     freopen_s(&fp, "CONIN$", "r", stdin);
 
     Application app;
+    bool noPopup = (strstr(lpCmdLine, "--no-popup") != nullptr);
 
     // 初始化应用：D3D、捕获、IMU、GUI 等全部子系统
-    if (!app.Init())
+    if (!app.Init(noPopup))
     {
         MessageBoxW(nullptr, L"应用初始化失败，请检查日志文件。", L"NrealSpatialDisplay", MB_OK | MB_ICONERROR);
         return 1;

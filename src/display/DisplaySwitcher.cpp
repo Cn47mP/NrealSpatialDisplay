@@ -159,9 +159,13 @@ bool DisplaySwitcher::ToggleMode() {
 }
 
 bool DisplaySwitcher::SetBrightness(int level) {
-    // Nreal Light brightness is controlled via MCU HID
-    // This would require MCU command implementation
-    // For now, log that this is not yet implemented
-    LOG_WARN("DisplaySwitcher: SetBrightness not yet implemented for Nreal Light");
+    if (level < 0) level = 0;
+    if (level > 100) level = 100;
+
+    if (m_brightnessCb) {
+        return m_brightnessCb(level);
+    }
+
+    LOG_WARN("DisplaySwitcher: SetBrightness(%d) - no callback wired", level);
     return false;
 }

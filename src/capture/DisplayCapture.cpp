@@ -131,7 +131,30 @@ bool DisplayCapture::Init(ID3D11Device* device, int displayIndex) {
     m_device = device;
     m_displayIndex = displayIndex;
 
-    // 创建备用纹理（WGC 失败时使用）
+    // 尝试 WGC 高性能捕获
+    if (InitWGC(displayIndex)) {
+        m_initialized = true;
+        return true;
+    }
+
+    // WGC 失败，回退到 GDI
+    LOG_INFO("DisplayCapture: WGC unavailable, falling back to GDI");
+    return InitGDI(device);
+}
+
+bool DisplayCapture::InitGDI(ID3D11Device* device) {
+    m_device = device;
+
+    // 枚举显示器获取真实分辨率
+    DISPLAY_DEVICEW dd = {};
+    dd.cb = sizeof(dd);
+    DEVMODEW dm = {};
+    if (EnumDisplayDevicesW(nullptr, m_displayIndex, &dd, 0) && EnumDisplaySettingsW(dd.DeviceName, ENUM_CURRENT_SETTINGS, &dm)) {
+        m_width = dm.dmPelsWidth;
+        m_height = dm.dmPelsHeight;
+    }
+
+    // 创建默认纹理
     D3D11_TEXTURE2D_DESC desc = {};
     desc.Width = m_width;
     desc.Height = m_height;
@@ -148,13 +171,31 @@ bool DisplayCapture::Init(ID3D11Device* device, int displayIndex) {
         return false;
     }
 
-    // 尝试初始化 WGC
-    if (InitWGC(displayIndex)) {
-        LOG_INFO("DisplayCapture: Source #%d using WGC capture (%ux%u)", displayIndex, m_width, m_height);
-    } else {
-        LOG_WARN("DisplayCapture: Source #%d WGC unavailable, using fallback pattern (%ux%u)",
-                 displayIndex, m_width, m_height);
+    // 创建staging纹理用于CPU写入
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    hr = device->CreateTexture2D(&desc, nullptr, &m_stagingTexture);
+    if (FAILED(hr)) {
+        LOG_ERROR("DisplayCapture: Create staging texture failed: 0x%08X", hr);
+        return false;
     }
+
+    // 初始化GDI捕获资源
+    m_hdcScreen = GetDC(nullptr);
+    m_hdcMem = CreateCompatibleDC(m_hdcScreen);
+    m_bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    m_bmi.bmiHeader.biWidth = m_width;
+    m_bmi.bmiHeader.biHeight = -m_height; // 顶部朝下
+    m_bmi.bmiHeader.biPlanes = 1;
+    m_bmi.bmiHeader.biBitCount = 32;
+    m_bmi.bmiHeader.biCompression = BI_RGB;
+    m_hBitmap = CreateDIBSection(m_hdcMem, &m_bmi, DIB_RGB_COLORS, (void**)&m_frameBuffer, nullptr, 0);
+    SelectObject(m_hdcMem, m_hBitmap);
+
+    m_frameBuffer.resize(m_width * m_height * 4);
+
+    LOG_INFO("DisplayCapture: Source #%d using GDI capture (%ux%u)", m_displayIndex, m_width, m_height);
 
     m_initialized = true;
     return true;
@@ -236,9 +277,16 @@ bool DisplayCapture::InitWGC(int displayIndex) {
     }
 
     // 创建 WinRT D3D 设备
-    ComPtr<IUnknown> rtDevice = CreateWinRTD3DDevice(m_device.Get());
-    if (!rtDevice) {
+    ComPtr<IUnknown> rtDeviceUnknown = CreateWinRTD3DDevice(m_device.Get());
+    if (!rtDeviceUnknown) {
         LOG_WARN("DisplayCapture: CreateWinRTD3DDevice failed");
+        return false;
+    }
+
+    ComPtr<IDirect3DDevice> rtDevice;
+    hr = rtDeviceUnknown.As(&rtDevice);
+    if (FAILED(hr)) {
+        LOG_WARN("DisplayCapture: QI for IDirect3DDevice failed: 0x%08X", hr);
         return false;
     }
 
@@ -247,8 +295,8 @@ bool DisplayCapture::InitWGC(int displayIndex) {
     hr = framePoolStatics->Create(
         rtDevice.Get(),
         DirectXPixelFormat::DirectXPixelFormat_B8G8R8A8UIntNormalized,
-        1,  // 帧数
-        {m_width, m_height},
+        2,  // 双缓冲
+        {static_cast<int32_t>(m_width), static_cast<int32_t>(m_height)},
         &framePool);
     if (FAILED(hr)) {
         LOG_WARN("DisplayCapture: FramePool::Create failed: 0x%08X", hr);
@@ -256,13 +304,8 @@ bool DisplayCapture::InitWGC(int displayIndex) {
     }
 
     // 创建捕获会话
-    ComPtr<IDirect3D11CaptureFramePool> pool = framePool;
     ComPtr<IGraphicsCaptureSession> session;
-    ComPtr<IDirect3D11CaptureFramePool2> pool2;
-    hr = pool.As(&pool2);
-    if (SUCCEEDED(hr)) {
-        hr = pool2->CreateCaptureSession(item.Get(), &session);
-    }
+    hr = framePool->CreateCaptureSession(item.Get(), &session);
     if (FAILED(hr)) {
         LOG_WARN("DisplayCapture: CreateCaptureSession failed: 0x%08X", hr);
         return false;
@@ -275,6 +318,22 @@ bool DisplayCapture::InitWGC(int displayIndex) {
         return false;
     }
 
+    // 创建输出纹理
+    D3D11_TEXTURE2D_DESC texDesc = {};
+    texDesc.Width = m_width;
+    texDesc.Height = m_height;
+    texDesc.MipLevels = 1;
+    texDesc.ArraySize = 1;
+    texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    texDesc.SampleDesc.Count = 1;
+    texDesc.Usage = D3D11_USAGE_DEFAULT;
+    texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    hr = m_device->CreateTexture2D(&texDesc, nullptr, &m_cachedTexture);
+    if (FAILED(hr)) {
+        LOG_ERROR("DisplayCapture: CreateTexture2D for WGC failed: 0x%08X", hr);
+        return false;
+    }
+
     // 保存到成员变量
     m_framePool = framePool;
     m_captureSession = session;
@@ -284,14 +343,69 @@ bool DisplayCapture::InitWGC(int displayIndex) {
     return true;
 }
 
-void DisplayCapture::Shutdown() {
-    if (m_captureSession) {
-        m_captureSession->Close();
-        m_captureSession.Reset();
+bool DisplayCapture::UpdateWGCFrame(ID3D11DeviceContext* ctx) {
+    if (!m_wgcActive || !m_framePool) return false;
+
+    ComPtr<IDirect3D11CaptureFrame> frame;
+    HRESULT hr = m_framePool->TryGetNextFrame(&frame);
+    if (FAILED(hr) || !frame) {
+        return false;
     }
-    m_framePool.Reset();
+
+    // 从捕获帧获取纹理
+    ComPtr<IDirect3DDxgiInterfaceAccess> access;
+    hr = frame->QueryInterface(IID_PPV_ARGS(&access));
+    if (FAILED(hr)) {
+        return false;
+    }
+
+    ComPtr<ID3D11Texture2D> frameTexture;
+    hr = access->GetInterface(IID_PPV_ARGS(&frameTexture));
+    if (FAILED(hr)) {
+        return false;
+    }
+
+    // 拷贝到缓存纹理
+    ctx->CopyResource(m_cachedTexture.Get(), frameTexture.Get());
+    return true;
+}
+
+bool DisplayCapture::UpdateGDIFrame(ID3D11DeviceContext* ctx) {
+    // 捕获屏幕到DIB段
+    BitBlt(m_hdcMem, 0, 0, m_width, m_height, m_hdcScreen, 0, 0, SRCCOPY);
+
+    // 拷贝到staging纹理
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (FAILED(ctx->Map(m_stagingTexture.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        return false;
+    }
+
+    BYTE* dst = (BYTE*)mapped.pData;
+    for (UINT y = 0; y < m_height; y++) {
+        memcpy(dst + y * mapped.RowPitch, m_frameBuffer.data() + y * m_width * 4, m_width * 4);
+    }
+
+    ctx->Unmap(m_stagingTexture.Get(), 0);
+    ctx->CopyResource(m_cachedTexture.Get(), m_stagingTexture.Get());
+    return true;
+}
+
+void DisplayCapture::Shutdown() {
+    // 清理 WGC 资源（ComPtr 析构自动释放，无需显式 Close）
+    if (m_wgcActive) {
+        m_captureSession.Reset();
+        m_framePool.Reset();
+        m_wgcLatestFrame.Reset();
+        m_wgcActive = false;
+    }
+
+    // 清理 GDI 资源
+    if (m_hBitmap) DeleteObject(m_hBitmap);
+    if (m_hdcMem) DeleteDC(m_hdcMem);
+    if (m_hdcScreen) ReleaseDC(nullptr, m_hdcScreen);
+
     m_cachedTexture.Reset();
-    m_wgcActive = false;
+    m_stagingTexture.Reset();
     m_hasFrame = false;
     m_initialized = false;
     m_dxgiDevice.Reset();
@@ -300,30 +414,19 @@ void DisplayCapture::Shutdown() {
 bool DisplayCapture::CaptureFrame(ID3D11DeviceContext* ctx, ID3D11Texture2D** outTexture) {
     if (!m_initialized || !outTexture) return false;
 
-    if (m_wgcActive && m_framePool) {
-        // 从 WGC 帧池获取最新帧
-        ComPtr<IDirect3D11CaptureFrame> frame;
-        HRESULT hr = m_framePool->TryGetNextFrame(&frame);
-        if (SUCCEEDED(hr) && frame) {
-            // 获取帧中的 D3D 纹理
-            ComPtr<IDirect3DDxgiInterfaceAccess> access;
-            hr = frame->QueryInterface(IID_PPV_ARGS(&access));
-            if (SUCCEEDED(hr)) {
-                ComPtr<ID3D11Texture2D> frameTex;
-                hr = access->GetInterface(IID_PPV_ARGS(&frameTex));
-                if (SUCCEEDED(hr) && frameTex) {
-                    // 复制到缓存纹理
-                    ctx->CopyResource(m_cachedTexture.Get(), frameTex.Get());
-                    m_hasFrame = true;
-                }
-            }
-            frame->Close();
+    // 优先使用 WGC 高性能捕获
+    if (m_wgcActive) {
+        if (UpdateWGCFrame(ctx)) {
+            m_hasFrame = true;
         }
     }
-
-    if (!m_hasFrame) {
-        // WGC 未就绪，使用模拟帧
+    // 回退到 GDI 捕获
+    else if (UpdateGDIFrame(ctx)) {
+        m_hasFrame = true;
+    } else {
+        // 捕获失败时使用模拟帧
         UpdateSimulatedFrame(ctx);
+        m_hasFrame = true;
     }
 
     *outTexture = m_cachedTexture.Get();

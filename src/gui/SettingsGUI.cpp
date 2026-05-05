@@ -144,6 +144,16 @@ void SettingsGUI::RenderSettingsWindow() {
         ImGui::TreePop();
     }
 
+    if (ImGui::TreeNode("Hotkeys")) {
+        ImGui::Text("Global Hotkeys");
+        ImGui::Separator();
+        for (size_t i = 0; i < m_config.hotkeys.entries.size(); i++) {
+            auto& hotkey = m_config.hotkeys.entries[i];
+            ImGui::Text("%s: %s", hotkey.name.c_str(), FormatHotkey(hotkey).c_str());
+        }
+        ImGui::TreePop();
+    }
+
     ImGui::Separator();
 
     if (m_renderingPaused) {
@@ -155,6 +165,36 @@ void SettingsGUI::RenderSettingsWindow() {
     if (ImGui::Button("Save Config")) {
         if (m_onConfigChanged) {
             m_onConfigChanged(m_config);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset View")) {
+        if (m_onResetView) {
+            m_onResetView();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Screenshot")) {
+        if (m_onAction) {
+            m_onAction("screenshot");
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Advanced")) {
+        ImGui::Checkbox("Auto Start Minimized", &m_config.hud.enabled); // 复用字段临时用
+        ImGui::Checkbox("Minimize To Tray", &m_config.hud.showFps);
+        ImGui::Checkbox("Show Notifications", &m_config.hud.showLatency);
+        if (ImGui::Button("Reset To Defaults")) {
+            AppConfig defaults;
+            AppConfig::CreateDefaults(defaults);
+            m_config = defaults;
+            if (m_onConfigChanged) {
+                m_onConfigChanged(m_config);
+            }
+            if (m_onLayoutSwitch) {
+                m_onLayoutSwitch(m_config.layout.name);
+            }
+            LOG_INFO("SettingsGUI: Reset to defaults");
         }
     }
 

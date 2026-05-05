@@ -20,8 +20,11 @@
 
 struct NrealDisplayInfo {
     bool found = false;
+    std::wstring deviceName;
     UINT width = 1920;
     UINT height = 1080;
+    int posX = 0;
+    int posY = 0;
 };
 
 enum class ConnectionState {
@@ -37,7 +40,7 @@ public:
     Application();
     ~Application();
 
-    bool Init();
+    bool Init(bool noPopup = false);
     void Shutdown();
     void Tick();
     void HandleAction(const std::string& action);
@@ -49,7 +52,7 @@ public:
     LRESULT WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
-    bool CreateMainWindow();
+    bool CreateMainWindow(bool noPopup = false);
     bool CreatePreviewWindow();
     void TakeScreenshot();
 
@@ -87,8 +90,8 @@ private:
 
     void RegisterHotkeys();
     void UnregisterHotkeys();
-    int GetHotkeyId(const std::string& action);
-    bool HasConflict(int vk, bool ctrl, bool alt, bool shift, const std::string& excludeAction);
+    int GetHotkeyId(const std::string& action) const;
+    bool HasConflict(int vk, bool ctrl, bool alt, bool shift, const std::string& excludeAction) const;
     std::chrono::high_resolution_clock::time_point m_lastTick;
     float m_fps = 60.0f;
     int m_frameCount = 0;

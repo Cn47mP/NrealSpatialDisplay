@@ -49,7 +49,18 @@ bool AirIMU::TryConnectAirAPI() {
 
     LOG_INFO("AirIMU: Attempting connection...");
 
-    m_connected = false;
+    if (StartConnection) {
+        int result = StartConnection();
+        LOG_INFO("AirIMU: StartConnection() returned %d", result);
+        if (result < 0) {
+            LOG_WARN("AirIMU: StartConnection failed with code %d", result);
+            m_connected = false;
+            return false;
+        }
+    }
+
+    m_connected = true;
+    LOG_INFO("AirIMU: Connection established");
     return true;
 }
 
@@ -100,6 +111,7 @@ ImuData AirIMU::GetLatest() const {
 
 void AirIMU::PollLoop() {
     LOG_INFO("PollLoop: starting");
+    int failCount = 0;
     while (m_running) {
         ImuData data = {};
         bool success = false;
@@ -118,17 +130,27 @@ void AirIMU::PollLoop() {
                 data.yaw = euler[2];
                 data.timestampUs = GetTimeUs();
                 success = true;
+                failCount = 0;
+
+                if (!m_connected) {
+                    m_connected = true;
+                    LOG_INFO("PollLoop: Connection restored");
+                }
             }
         }
 
-        if (!success && m_connected) {
-            m_connected = false;
-            LOG_WARN("PollLoop: Connection lost");
-            if (m_disconnectCallback) {
-                m_disconnectCallback();
-            }
-            if (m_hasAirAPI && StopConnection) {
-                StopConnection();
+        if (!success) {
+            failCount++;
+            // Only mark disconnected after sustained failures (avoid false positives on first few reads)
+            if (m_connected && failCount > 60) {
+                m_connected = false;
+                LOG_WARN("PollLoop: Connection lost (after %d consecutive failures)", failCount);
+                if (m_disconnectCallback) {
+                    m_disconnectCallback();
+                }
+                if (m_hasAirAPI && StopConnection) {
+                    StopConnection();
+                }
             }
         }
 

@@ -3,6 +3,8 @@
 
 #include "Application.h"
 #include "utils/Log.h"
+#include <dxgi.h>
+#include <string>
 #include "app/AppConfig.h"
 #include "layout/LayoutEngine.h"
 #include "layout/LayoutPreset.h"
@@ -61,10 +63,9 @@ Application::~Application()
 // Init - 初始化所有子系统
 // ============================================================
 
-bool Application::Init()
+bool Application::Init(bool noPopup)
 {
-    // 1. COM 初始化
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hr))
     {
         LOG_ERROR("CoInitializeEx 失败: 0x%08X", hr);
@@ -86,7 +87,7 @@ bool Application::Init()
     m_hotkeys = m_config.hotkeys.entries;
 
     // 6. 创建主窗口（自动寻找 Nreal 显示器）
-    if (!CreateMainWindow())
+    if (!CreateMainWindow(noPopup))
     {
         LOG_ERROR("创建主窗口失败");
         return false;
@@ -118,7 +119,7 @@ bool Application::Init()
         const auto& screen = m_config.layout.screens[i];
         if (screen.curvatureRad > 0.0f)
         {
-            m_renderer->InitCurvedScreen(i, screen.curvatureRad, screen.curveSegments);
+            m_renderer->InitCurvedScreen(i, screen.sizeMeters.x, screen.sizeMeters.y, screen.curvatureRad, screen.curveSegments);
         }
     }
 
@@ -133,8 +134,7 @@ bool Application::Init()
     m_gui->Init(m_hwnd, device, ctx);
 
     // 12. 初始化预览 HUD
-    m_gui->InitPreviewHud(m_renderer->GetPreviewDevice(), m_renderer->GetPreviewContext(),
-                          m_previewW, m_previewH);
+    m_gui->InitPreviewHud(m_renderer->GetPreviewDevice(), m_renderer->GetPreviewContext(), m_previewHwnd);
 
     // 13. 初始化屏幕捕获管理器
     m_captureMgr = std::make_unique<CaptureManager>();
@@ -151,19 +151,33 @@ bool Application::Init()
     if (m_config.imu.enabled)
     {
         m_airIMU = std::make_unique<AirIMU>();
-        m_airIMU->Start();
         m_airIMU->SetDisconnectCallback([this]() {
             LOG_WARN("AirIMU 断开连接");
             m_connState = ConnectionState::Disconnected;
         });
-        m_connState = ConnectionState::Connected;
+        if (m_airIMU->Start() && m_airIMU->IsConnected()) {
+            m_connState = ConnectionState::Connected;
+            LOG_INFO("IMU 已连接");
+        } else {
+            m_connState = ConnectionState::Disconnected;
+            LOG_WARN("IMU 未连接，将以模拟模式运行");
+        }
     }
+
+    // 14.5 初始化显示切换器
+    m_displaySwitcher = std::make_unique<DisplaySwitcher>();
+    m_displaySwitcher->SetBrightnessCallback([this](int level) -> bool {
+        if (m_airIMU) {
+            return m_airIMU->SetBrightness(level);
+        }
+        return false;
+    });
 
     // 15. 计算世界矩阵
     LayoutEngine::UpdateWorldMatrices(m_config.layout);
 
     // 16. 设置相机初始位置
-    m_camera.SetPosition(m_config.layout.viewerOffset);
+    m_camera.SetPosition(XMLoadFloat3(&m_config.layout.viewerOffset));
 
     // 17. 注册全局热键
     RegisterHotkeys();
@@ -172,22 +186,24 @@ bool Application::Init()
     CreateTrayIcon();
 
     // 19. 绑定 GUI 回调
-    m_gui->SetOnToggle([this](const std::string& id, bool enabled) {
-        HandleAction(id);
+    m_gui->OnToggle([this](bool enabled) {
+        m_renderingPaused = !enabled;
     });
-    m_gui->SetOnConfigChanged([this]() {
-        // 配置变更时可触发保存或重载
-    });
-    m_gui->SetOnLayoutSwitch([this](const std::string& name) {
+        m_gui->OnConfigChanged([this](const AppConfig& cfg) {
+            m_config = cfg;
+            m_config.Save("config/default.json");
+            SwitchLayout(cfg.layout.name);
+        });
+    m_gui->OnLayoutSwitch([this](const std::string& name) {
         SwitchLayout(name);
     });
-    m_gui->SetOnResetView([this]() {
+    m_gui->OnResetView([this]() {
         HandleAction("reset_view");
     });
-    m_gui->SetOnQuit([this]() {
+    m_gui->OnQuit([this]() {
         PostQuitMessage(0);
     });
-    m_gui->SetOnAction([this](const std::string& action) {
+    m_gui->OnAction([this](const std::string& action) {
         HandleAction(action);
     });
 
@@ -242,14 +258,13 @@ void Application::Tick()
     }
 
     // 5. 屏幕捕获
-    m_captureMgr->CaptureAll();
+        m_captureMgr->CaptureAll(m_renderer->GetContext());
 
     // 6. 更新纹理
     for (int i = 0; i < static_cast<int>(m_config.layout.screens.size()); ++i)
     {
-        ID3D11ShaderResourceView* tex = m_captureMgr->GetTexture(i);
-        if (tex)
-        {
+        ID3D11Texture2D* tex = m_captureMgr->GetTexture(i);
+        if (tex) {
             m_renderer->UpdateTexture(i, tex);
         }
     }
@@ -268,7 +283,8 @@ void Application::Tick()
     // 9. 绘制所有屏幕
     for (int i = 0; i < static_cast<int>(m_config.layout.screens.size()); ++i)
     {
-        ID3D11ShaderResourceView* srv = m_captureMgr->GetTexture(i);
+        ID3D11Texture2D* tex = m_captureMgr->GetTexture(i);
+        ID3D11ShaderResourceView* srv = m_renderer->GetTextureSRV(i);
         m_renderer->DrawScreen(m_config.layout.screens[i].worldMatrix, viewProj, srv, i);
     }
 
@@ -282,24 +298,25 @@ void Application::Tick()
     // 11. 结束主窗口渲染
     m_renderer->EndFrame();
 
-    // 12. 预览窗口
+    // 12. 更新 GUI 显示数据（修复时序：先更新再渲染）
+    m_gui->SetFps(m_fps);
+    if (m_airIMU)
+    {
+        ImuData imu = m_airIMU->GetLatest();
+        m_gui->SetImuData(imu.pitch, imu.yaw, imu.roll);
+    }
+    m_gui->SetCameraMode(m_camera.GetMode() == CameraMode::HeadLock ? "HeadLock" : "Free");
+    m_gui->SetCaptureCount(static_cast<int>(m_captureMgr->GetCount()));
+    m_gui->SetScreenCount(static_cast<int>(m_config.layout.screens.size()));
+    m_gui->SetLayoutName(m_config.layout.name);
+    m_gui->SetRenderingPaused(m_renderingPaused);
+
+    // 13. 预览窗口
     if (m_renderer->IsPreviewReady())
     {
         m_gui->RenderPreviewHud();
         m_renderer->PresentPreview();
     }
-
-    // 13. 更新 GUI 显示数据
-    m_gui->SetFps(m_fps);
-    if (m_airIMU)
-    {
-        m_gui->SetImuData(m_airIMU->GetLatest());
-    }
-    m_gui->SetCameraMode(m_camera.GetMode() == CameraMode::HeadLock ? "HeadLock" : "Free");
-    m_gui->SetCaptureCount(m_captureMgr->GetActiveCount());
-    m_gui->SetScreenCount(static_cast<int>(m_config.layout.screens.size()));
-    m_gui->SetLayoutName(m_config.layout.name);
-    m_gui->SetRenderingPaused(m_renderingPaused);
 
     // 定期更新托盘提示
     auto tooltipNow = std::chrono::steady_clock::now();
@@ -382,12 +399,16 @@ void Application::HandleAction(const std::string& action)
         if (!m_airIMU)
         {
             m_airIMU = std::make_unique<AirIMU>();
-            m_airIMU->Start();
             m_airIMU->SetDisconnectCallback([this]() {
                 m_connState = ConnectionState::Disconnected;
             });
-            m_connState = ConnectionState::Connected;
-            LOG_INFO("IMU 已启动");
+            if (m_airIMU->Start() && m_airIMU->IsConnected()) {
+                m_connState = ConnectionState::Connected;
+                LOG_INFO("IMU 已连接");
+            } else {
+                m_connState = ConnectionState::Disconnected;
+                LOG_WARN("IMU 未连接");
+            }
         }
         else
         {
@@ -475,7 +496,7 @@ void Application::SetPaused(bool paused)
 // TryReconnect - 断线重连
 // ============================================================
 
-void Application::TryReconnect()
+bool Application::TryReconnect()
 {
     m_connState = ConnectionState::Reconnecting;
     LOG_INFO("尝试重连...");
@@ -490,7 +511,8 @@ void Application::TryReconnect()
 
     if (m_captureMgr)
     {
-        captureOk = m_captureMgr->ReinitAll();
+        m_captureMgr->ReinitAll();
+        captureOk = true; // 模拟模式下始终成功
     }
 
     // 如果没有 IMU，只看捕获状态
@@ -504,9 +526,9 @@ void Application::TryReconnect()
     else
     {
         m_connState = ConnectionState::Disconnected;
-        LOG_WARN("重连失败 (IMU: %s, Capture: %s)",
-                 imuOk ? "OK" : "FAIL", captureOk ? "OK" : "FAIL");
+        LOG_WARN("重连失败 (IMU: %s, Capture: %s)", imuOk ? "OK" : "FAIL", captureOk ? "OK" : "FAIL");
     }
+    return imuOk && captureOk;
 }
 
 // ============================================================
@@ -584,7 +606,7 @@ LRESULT Application::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 // CreateMainWindow - 创建主渲染窗口
 // ============================================================
 
-bool Application::CreateMainWindow()
+bool Application::CreateMainWindow(bool noPopup)
 {
     // 注册窗口类
     WNDCLASSEXW wc = {};
@@ -597,51 +619,113 @@ bool Application::CreateMainWindow()
     wc.lpszClassName = L"NrealSpatialDisplay";
     RegisterClassExW(&wc);
 
-    // 枚举显示器，寻找 Nreal Light（名称包含 "light"）
+    // 使用 DXGI 枚举所有显示器输出，寻找 Nreal Light
+    // 策略：第一轮找 "light"/"nreal"，第二轮取第一个非虚拟显示器
     bool foundNreal = false;
-    DISPLAY_DEVICEW dd = {};
-    dd.cb = sizeof(dd);
-    DEVMODEW dm = {};
+    struct OutputInfo { int adapterIdx; int outputIdx; RECT rect; std::wstring name; };
+    OutputInfo nrealOutput = {};
+    OutputInfo fallbackOutput = {};
+    bool hasFallback = false;
 
-    for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &dd, 0); ++i)
+    IDXGIFactory* pFactory = nullptr;
+    if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&pFactory)))
     {
-        // 检查设备名称是否包含 "light"（不区分大小写）
-        std::wstring devName(dd.DeviceName);
-        std::wstring lower = devName;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
-
-        if (lower.find(L"light") != std::wstring::npos)
+        for (UINT ai = 0; ; ++ai)
         {
-            // 找到 Nreal 显示器
-            EnumDisplaySettingsW(dd.DeviceName, ENUM_CURRENT_SETTINGS, &dm);
+            IDXGIAdapter* pAdapter = nullptr;
+            if (pFactory->EnumAdapters(ai, &pAdapter) == DXGI_ERROR_NOT_FOUND)
+                break;
 
-            m_nrealDisplay.deviceName = devName;
-            m_nrealDisplay.width = dm.dmPelsWidth;
-            m_nrealDisplay.height = dm.dmPelsHeight;
-            m_nrealDisplay.posX = dm.dmPosition.x;
-            m_nrealDisplay.posY = dm.dmPosition.y;
+            DXGI_ADAPTER_DESC adesc;
+            pAdapter->GetDesc(&adesc);
+            LOG_INFO("DXGI 适配器[%u]: %ls", ai, adesc.Description);
 
-            // 全屏窗口创建在 Nreal 显示器上
-            m_hwnd = CreateWindowExW(
-                WS_EX_TOPMOST,
-                L"NrealSpatialDisplay",
-                L"NrealSpatialDisplay",
-                WS_POPUP,
-                dm.dmPosition.x, dm.dmPosition.y,
-                dm.dmPelsWidth, dm.dmPelsHeight,
-                nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+            for (UINT oi = 0; ; ++oi)
+            {
+                IDXGIOutput* pOutput = nullptr;
+                if (pAdapter->EnumOutputs(oi, &pOutput) == DXGI_ERROR_NOT_FOUND)
+                    break;
 
-            foundNreal = true;
-            LOG_INFO("找到 Nreal 显示器: %s (%ux%u)",
-                     dd.DeviceName, dm.dmPelsWidth, dm.dmPelsHeight);
-            break;
+                DXGI_OUTPUT_DESC odesc;
+                pOutput->GetDesc(&odesc);
+                int w = odesc.DesktopCoordinates.right - odesc.DesktopCoordinates.left;
+                int h = odesc.DesktopCoordinates.bottom - odesc.DesktopCoordinates.top;
+                LOG_INFO("  输出[%u]: %ls (%dx%d @ %d,%d)",
+                         oi, odesc.DeviceName, w, h,
+                         odesc.DesktopCoordinates.left, odesc.DesktopCoordinates.top);
+
+                // 匹配 "light" 或 "nreal"
+                std::wstring lower(odesc.DeviceName);
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+                if (!foundNreal && (lower.find(L"light") != std::wstring::npos ||
+                                    lower.find(L"nreal") != std::wstring::npos))
+                {
+                    nrealOutput = { (int)ai, (int)oi, odesc.DesktopCoordinates, odesc.DeviceName };
+                    foundNreal = true;
+                    LOG_INFO("  -> 匹配 Nreal: %ls", odesc.DeviceName);
+                }
+                // 后备：跳过虚拟显示器，取第一个真实输出
+                else if (!hasFallback && lower.find(L"microsoft") == std::wstring::npos)
+                {
+                    fallbackOutput = { (int)ai, (int)oi, odesc.DesktopCoordinates, odesc.DeviceName };
+                    hasFallback = true;
+                }
+
+                pOutput->Release();
+            }
+            pAdapter->Release();
         }
+        pFactory->Release();
+    }
+    else
+    {
+        LOG_ERROR("CreateDXGIFactory 失败");
+    }
+
+    // 如果没找到 Nreal，使用后备输出
+    if (!foundNreal && hasFallback)
+    {
+        LOG_WARN("未找到 Nreal 显示器，使用后备输出: %ls", fallbackOutput.name.c_str());
+        nrealOutput = fallbackOutput;
+        foundNreal = true;
+    }
+
+    if (foundNreal)
+    {
+        int w = nrealOutput.rect.right - nrealOutput.rect.left;
+        int h = nrealOutput.rect.bottom - nrealOutput.rect.top;
+        int x = nrealOutput.rect.left;
+        int y = nrealOutput.rect.top;
+
+        m_nrealDisplay.found = true;
+        m_nrealDisplay.deviceName = nrealOutput.name;
+        m_nrealDisplay.width = w;
+        m_nrealDisplay.height = h;
+        m_nrealDisplay.posX = x;
+        m_nrealDisplay.posY = y;
+
+        m_hwnd = CreateWindowExW(WS_EX_TOPMOST,
+            L"NrealSpatialDisplay", L"NrealSpatialDisplay", WS_POPUP,
+            x, y, w, h,
+            nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+
+        LOG_INFO("全屏窗口: %ls (%dx%d @ %d,%d)", nrealOutput.name.c_str(), w, h, x, y);
     }
 
     // 未找到 Nreal 显示器，使用窗口模式 1920x1080
     if (!foundNreal)
     {
         LOG_WARN("未找到 Nreal 显示器，使用窗口模式 1920x1080");
+        
+        if (!noPopup) {
+            int ret = MessageBoxW(nullptr, 
+                L"未检测到Nreal Light设备，是否进入窗口开发模式？\n\n选择「是」可调试渲染逻辑，选择「否」退出程序。", 
+                L"NrealSpatialDisplay", 
+                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1);
+            if (ret == IDNO) {
+                return false;
+            }
+        }
 
         m_hwnd = CreateWindowExW(
             0,
@@ -861,7 +945,7 @@ void Application::SwitchLayout(const std::string& name)
         const auto& screen = m_config.layout.screens[i];
         if (screen.curvatureRad > 0.0f)
         {
-            m_renderer->InitCurvedScreen(i, screen.curvatureRad, screen.curveSegments);
+            m_renderer->InitCurvedScreen(i, screen.sizeMeters.x, screen.sizeMeters.y, screen.curvatureRad, screen.curveSegments);
         }
     }
 

@@ -2,6 +2,9 @@
 #include <windows.h>
 #include <string>
 #include <vector>
+#include <functional>
+
+using BrightnessCallback = std::function<bool(int)>;
 
 // Manages Nreal display connection and Side-by-Side (SBS) mode
 class DisplaySwitcher {
@@ -43,6 +46,7 @@ public:
 
     // Set brightness (0-100)
     bool SetBrightness(int level);
+    void SetBrightnessCallback(BrightnessCallback cb) { m_brightnessCb = std::move(cb); }
 
     static std::vector<DisplayInfo> EnumerateAllDisplays();
 
@@ -54,4 +58,5 @@ private:
     bool m_sbsEnabled = false;
     DisplayInfo m_nrealInfo;
     DisplayMode m_originalMode;
+    BrightnessCallback m_brightnessCb;
 };

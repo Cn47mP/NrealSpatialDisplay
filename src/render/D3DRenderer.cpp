@@ -184,7 +184,113 @@ bool D3DRenderer::CreateBlitVB() {
     return true;
 }
 
+// 场景顶点着色器 inline 源码
+const char* g_sceneVSSrc = R"(
+cbuffer CB : register(b0) {
+    float4x4 g_worldViewProj;
+    float4   g_borderColor;
+    float    g_borderWidth;
+    float3   g_pad;
+};
+
+struct VS_IN {
+    float3 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+struct VS_OUT {
+    float4 pos : SV_POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VS_OUT VSMain(VS_IN input) {
+    VS_OUT output;
+    output.pos = mul(float4(input.pos, 1.0f), g_worldViewProj);
+    output.uv  = input.uv;
+    return output;
+}
+)";
+
+// 场景像素着色器 inline 源码
+const char* g_scenePSSrc = R"(
+Texture2D<float4> g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+cbuffer CB : register(b0) {
+    float4x4 g_worldViewProj;
+    float4   g_borderColor;
+    float    g_borderWidth;
+    float3   g_pad;
+};
+
+struct PS_IN {
+    float4 pos : SV_POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+float4 PSMain(PS_IN input) : SV_TARGET {
+    float2 uv = input.uv;
+    float b = g_borderWidth;
+
+    // 边框检测
+    if (uv.x < b || uv.x > 1.0f - b || uv.y < b || uv.y > 1.0f - b)
+        return g_borderColor;
+
+    // 采样桌面纹理
+    return g_texture.Sample(g_sampler, uv);
+}
+)";
+
 bool D3DRenderer::LoadSceneShaders() {
+    ComPtr<ID3DBlob> vsBlob, psBlob, errors;
+
+    // 编译顶点着色器
+    HRESULT hr = D3DCompile(
+        g_sceneVSSrc, strlen(g_sceneVSSrc),
+        "sceneVS.hlsl", nullptr, nullptr,
+        "VSMain", "vs_5_0", 0, 0,
+        &vsBlob, &errors
+    );
+    if (FAILED(hr)) {
+        if (errors) LOG_ERROR("Scene VS compile error: %s", (char*)errors->GetBufferPointer());
+        return false;
+    }
+
+    // 编译像素着色器
+    hr = D3DCompile(
+        g_scenePSSrc, strlen(g_scenePSSrc),
+        "scenePS.hlsl", nullptr, nullptr,
+        "PSMain", "ps_5_0", 0, 0,
+        &psBlob, &errors
+    );
+    if (FAILED(hr)) {
+        if (errors) LOG_ERROR("Scene PS compile error: %s", (char*)errors->GetBufferPointer());
+        return false;
+    }
+
+    // 创建着色器对象
+    HR_CHECK_RET(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_vs));
+    HR_CHECK_RET(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_ps));
+
+    // 创建场景采样器
+    D3D11_SAMPLER_DESC sampDesc = {};
+    sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    HR_CHECK_RET(m_device->CreateSamplerState(&sampDesc, &m_sceneSampler));
+
+    // 创建输入布局（匹配ScreenVertex结构）
+    D3D11_INPUT_ELEMENT_DESC inputLayout[] = {
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    };
+    HR_CHECK_RET(m_device->CreateInputLayout(
+        inputLayout, ARRAYSIZE(inputLayout),
+        vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
+        &m_inputLayout));
+
+    LOG_INFO("D3DRenderer: Scene shaders compiled successfully");
     return true;
 }
 
@@ -203,6 +309,7 @@ bool D3DRenderer::Init(HWND glassesHwnd, UINT width, UINT height) {
     if (!CreateOffscreenRT(width, height)) return false;
     LOG_INFO("D3DRenderer::Init: compiling shaders");
     if (!CompileBlitShaders()) return false;
+    if (!LoadSceneShaders()) return false;
     LOG_INFO("D3DRenderer::Init: creating blit VB");
     if (!CreateBlitVB()) return false;
 
@@ -257,6 +364,8 @@ void D3DRenderer::Shutdown() {
     m_constantBuffer.Reset();
     m_vs.Reset();
     m_ps.Reset();
+    m_inputLayout.Reset();
+    m_sceneSampler.Reset();
     m_previewRTV.Reset();
     m_previewSwapChain.Reset();
     m_offscreenRTV.Reset();
@@ -286,6 +395,10 @@ void D3DRenderer::BeginFrame() {
 }
 
 void D3DRenderer::EndFrame() {
+    if (m_glassesSwapChain && m_glassesRTV) {
+        BlitToTarget(m_glassesSwapChain.Get(), m_glassesRTV.Get());
+        m_glassesSwapChain->Present(m_vsync ? 1 : 0, 0);
+    }
 }
 
 void D3DRenderer::PresentPreview() {
@@ -295,11 +408,20 @@ void D3DRenderer::PresentPreview() {
 }
 
 void D3DRenderer::DrawScreen(const XMMATRIX& worldMatrix, const XMMATRIX& viewProj, ID3D11ShaderResourceView* textureSRV, int screenIndex) {
-    if (!textureSRV) return;
+    if (!textureSRV || !m_vs || !m_ps) return;
 
-    XMMATRIX wvp = worldMatrix * viewProj;
+    // 选择要使用的屏幕quad
+    ScreenQuad* quad = nullptr;
+    if (screenIndex >= 0 && screenIndex < (int)m_screenQuads.size() && m_screenQuads[screenIndex]) {
+        quad = m_screenQuads[screenIndex].get();
+    } else {
+        quad = m_sharedQuad.get();
+    }
+    if (!quad) return;
+
+    XMMATRIX wvp = viewProj * worldMatrix; // D3D矩阵乘法是右乘：顶点 * world * view * proj
     SceneCB cb;
-    XMStoreFloat4x4(&cb.worldViewProj, wvp);
+    XMStoreFloat4x4(&cb.worldViewProj, XMMatrixTranspose(wvp)); // HLSL默认列主序，需要转置
     cb.borderColor = XMFLOAT4(m_borderColor[0], m_borderColor[1], m_borderColor[2], 1.0f);
     cb.borderWidth = m_borderWidth;
     cb.pad[0] = cb.pad[1] = cb.pad[2] = 0;
@@ -318,15 +440,19 @@ void D3DRenderer::DrawScreen(const XMMATRIX& worldMatrix, const XMMATRIX& viewPr
     memcpy(mapped.pData, &cb, sizeof(cb));
     m_context->Unmap(m_constantBuffer.Get(), 0);
 
-    m_context->VSSetShader(m_blitVS.Get(), nullptr, 0);
-    m_context->PSSetShader(m_blitPS.Get(), nullptr, 0);
+    // 绑定场景着色器和资源
+    m_context->IASetInputLayout(m_inputLayout.Get());
+    m_context->VSSetShader(m_vs.Get(), nullptr, 0);
+    m_context->PSSetShader(m_ps.Get(), nullptr, 0);
+    m_context->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+    m_context->PSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
     m_context->PSSetShaderResources(0, 1, &textureSRV);
+    m_context->PSSetSamplers(0, 1, m_sceneSampler.GetAddressOf());
 
-    UINT stride = sizeof(ScreenVertex);
-    UINT offset = 0;
-    m_context->IASetVertexBuffers(0, 1, m_blitVB.GetAddressOf(), &stride, &offset);
-    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-    m_context->Draw(4, 0);
+    // 绑定ScreenQuad的顶点和索引缓冲
+    quad->Bind(m_context.Get());
+    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_context->DrawIndexed(quad->GetIndexCount(), 0, 0);
 }
 
 void D3DRenderer::UpdateTexture(size_t index, ID3D11Texture2D* sourceTex) {

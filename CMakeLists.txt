@@ -66,6 +66,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     d3d11.lib
     dxgi.lib
     dxguid.lib
+    d3dcompiler.lib
     winmm.lib
     user32.lib
     gdi32.lib
@@ -80,6 +81,24 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
 )
+
+# 复制运行时 DLL 到 exe 所在目录
+if(EXISTS "${CMAKE_SOURCE_DIR}/airapi/hidapi-win/x64/hidapi.dll")
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/airapi/hidapi-win/x64/hidapi.dll"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/hidapi.dll"
+        COMMENT "Copying hidapi.dll"
+    )
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/airapi/AirAPI_Windows.dll")
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/airapi/AirAPI_Windows.dll"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/AirAPI_Windows.dll"
+        COMMENT "Copying AirAPI_Windows.dll"
+    )
+endif()
 
 # HLSL Shader 编译
 find_program(DXC_EXECUTABLE dxc HINTS ENV PATH)

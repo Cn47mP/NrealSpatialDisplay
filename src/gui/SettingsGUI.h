@@ -30,6 +30,7 @@ public:
     bool IsEnabled() const { return m_enabled; }
     void ToggleVisible() { m_windowVisible = !m_windowVisible; }
     bool IsVisible() const { return m_windowVisible; }
+    void ToggleHud() { m_hudVisible = !m_hudVisible; }
 
     void SetImuConnected(bool c) { m_imuConnected = c; }
     void SetImuData(float p, float y, float r) { m_pitch = p; m_yaw = y; m_roll = r; }

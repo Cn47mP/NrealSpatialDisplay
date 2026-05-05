@@ -59,7 +59,7 @@ bool ScreenQuad::InitCurved(ID3D11Device* device, float width, float height, flo
 
             float z = 0.0f;
             if (radius > 0.0f) {
-                float angle = u * XM_PI;
+                float angle = (u - 0.5f) * curvature; // 左右对称分布的弧形，curvature为总弧度
                 z = (float)(radius - radius * cos(angle));
             }
 

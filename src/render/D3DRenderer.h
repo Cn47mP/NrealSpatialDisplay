@@ -51,6 +51,8 @@ public:
 
     ID3D11Device* GetDevice() const { return m_device.Get(); }
     ID3D11DeviceContext* GetContext() const { return m_context.Get(); }
+    ID3D11Device* GetPreviewDevice() const { return m_device.Get(); }
+    ID3D11DeviceContext* GetPreviewContext() const { return m_context.Get(); }
 
 private:
     ComPtr<ID3D11Device> m_device;
@@ -76,7 +78,9 @@ private:
 
     ComPtr<ID3D11VertexShader> m_vs;
     ComPtr<ID3D11PixelShader> m_ps;
+    ComPtr<ID3D11InputLayout> m_inputLayout;
     ComPtr<ID3D11Buffer> m_constantBuffer;
+    ComPtr<ID3D11SamplerState> m_sceneSampler;
 
     std::vector<ComPtr<ID3D11Texture2D>> m_textures;
     std::vector<ComPtr<ID3D11ShaderResourceView>> m_srvs;

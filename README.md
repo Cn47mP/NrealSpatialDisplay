@@ -36,8 +36,8 @@
 │  Virtual Display Driver ──→ N 个虚拟显示器                        │
 │                                                                  │
 │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
-│  │ WCG 桌面捕获  │  │ AirAPI IMU   │  │ D3D11 渲染引擎         │ │
-│  │ (每屏一个)    │  │ 四元数 250Hz │  │ 离屏 RT → Blit        │ │
+│  │ GDI 桌面捕获  │  │ AirAPI IMU   │  │ D3D11 渲染引擎         │ │
+│  │ (WGC 可选)   │  │ 四元数 250Hz │  │ 离屏 RT → Blit        │ │
 │  └──────┬───────┘  └──────┬───────┘  │ → 眼镜 SwapChain      │ │
 │         │                  │          │ → 预览 SwapChain       │ │
 │         └──────────┬───────┘          │ → HUD 叠加             │ │
@@ -92,10 +92,10 @@
 cd src/gui && bash download_imgui.sh && cd ../..
 
 # 2. 放置依赖到 lib/
-#    - AirAPI_Windows.dll + .lib + .h
-#    - hidapi.dll
-#    - json.hpp (nlohmann)
-#    - VirtualDesktopAccessor.dll（可选）
+#    - json.hpp (nlohmann) — 已包含
+#    - AirAPI_Windows.dll + .lib + .h — 可选（缺失时 IMU 以模拟模式运行）
+#    - hidapi.dll — 可选（缺失时 IMU 以模拟模式运行）
+#    - VirtualDesktopAccessor.dll — 可选
 
 # 3. CMake 构建
 mkdir build && cd build
@@ -103,11 +103,16 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 ```
 
+> 着色器采用inline编译方案，无需额外安装dxc.exe或手动编译HLSL文件，构建时自动完成编译。
+
 ### 运行
 
 ```bash
-# 管理员权限运行
+# 普通运行，无设备时弹窗提示
 NrealSpatialDisplay.exe
+
+# 静默启动，无弹窗直接进入开发模式
+NrealSpatialDisplay.exe --no-popup
 ```
 
 1. 程序自动查找 Nreal Light 显示器，找不到则进入窗口开发模式
@@ -116,6 +121,8 @@ NrealSpatialDisplay.exe
 4. 按 **F3** 打开预览窗口查看眼镜画面
 5. 将应用窗口拖到虚拟显示器上，眼镜中即可看到多屏空间布局
 6. 转头查看不同方向的屏幕
+
+> **开发模式**：无 Nreal 设备时，IMU 以模拟模式运行（无头部追踪），GDI 捕获主显示器，无眼镜输出。通过预览窗口（F3）可查看渲染效果。
 
 ---
 
@@ -148,15 +155,17 @@ NrealSpatialDisplay/
 ├── CMakeLists.txt
 ├── config/
 │   └── default.json                # 配置文件
-├── lib/                            # 依赖库
+├── lib/                            # 依赖库（json.hpp；AirAPI/hidapi 需手动放置）
 ├── src/
 │   ├── main.cpp                    # WinMain 入口
 │   ├── app/                        # 应用主体（托盘、热键、配置）
 │   ├── gui/                        # ImGui 设置面板 + HUD
 │   ├── imu/                        # IMU 读取 + 滤波 + 漂移校正
-│   ├── capture/                    # WCG 桌面捕获
+│   ├── capture/                    # GDI 桌面捕获（WGC 可选）
 │   ├── render/                     # D3D11 渲染引擎 + 着色器
 │   ├── layout/                     # 3D 布局引擎 + 预设
+│   ├── display/                    # 显示切换器（SBS/2D、亮度）
+│   ├── network/                    # Unity UDP 数据流
 │   └── utils/                      # COM 辅助 + 日志
 └── README.md
 ```
