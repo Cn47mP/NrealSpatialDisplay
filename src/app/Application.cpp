@@ -63,7 +63,7 @@ Application::~Application()
 // Init - 初始化所有子系统
 // ============================================================
 
-bool Application::Init(bool noPopup)
+bool Application::Init(bool noPopup, int displayIndex)
 {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hr))
@@ -87,7 +87,7 @@ bool Application::Init(bool noPopup)
     m_hotkeys = m_config.hotkeys.entries;
 
     // 6. 创建主窗口（自动寻找 Nreal 显示器）
-    if (!CreateMainWindow(noPopup))
+    if (!CreateMainWindow(noPopup, displayIndex))
     {
         LOG_ERROR("创建主窗口失败");
         return false;
@@ -106,37 +106,8 @@ bool Application::Init(bool noPopup)
         return false;
     }
 
-    // 8. 创建屏幕渲染资源
-    if (!m_renderer->InitScreenResources(m_config.display.virtualCount))
-    {
-        LOG_ERROR("屏幕资源初始化失败");
-        return false;
-    }
-
-    // 9. 初始化曲面屏资源
-    for (int i = 0; i < static_cast<int>(m_config.layout.screens.size()); ++i)
-    {
-        const auto& screen = m_config.layout.screens[i];
-        if (screen.curvatureRad > 0.0f)
-        {
-            m_renderer->InitCurvedScreen(i, screen.sizeMeters.x, screen.sizeMeters.y, screen.curvatureRad, screen.curveSegments);
-        }
-    }
-
-    // 10. 创建预览窗口
-    CreatePreviewWindow();
-    m_renderer->InitPreview(m_previewHwnd, m_previewW, m_previewH);
-
-    // 11. 初始化 ImGui 设置面板
-    m_gui = std::make_unique<SettingsGUI>();
+    // 8. 初始化屏幕捕获管理器（必须在屏幕资源之前，以获取各源分辨率）
     auto* device = m_renderer->GetDevice();
-    auto* ctx = m_renderer->GetContext();
-    m_gui->Init(m_hwnd, device, ctx);
-
-    // 12. 初始化预览 HUD
-    m_gui->InitPreviewHud(m_renderer->GetPreviewDevice(), m_renderer->GetPreviewContext(), m_previewHwnd);
-
-    // 13. 初始化屏幕捕获管理器
     m_captureMgr = std::make_unique<CaptureManager>();
     {
         std::vector<int> captureIndices;
@@ -146,6 +117,42 @@ bool Application::Init(bool noPopup)
         }
         m_captureMgr->Init(device, captureIndices);
     }
+
+    // 9. 创建屏幕渲染资源（尺寸与捕获源匹配）
+    {
+        std::vector<std::pair<UINT, UINT>> sizes;
+        for (size_t i = 0; i < m_captureMgr->GetCount(); ++i)
+        {
+            sizes.push_back({m_captureMgr->GetSourceWidth(i), m_captureMgr->GetSourceHeight(i)});
+        }
+        if (!m_renderer->InitScreenResources(sizes))
+        {
+            LOG_ERROR("屏幕资源初始化失败");
+            return false;
+        }
+    }
+
+    // 10. 初始化曲面屏资源
+    for (int i = 0; i < static_cast<int>(m_config.layout.screens.size()); ++i)
+    {
+        const auto& screen = m_config.layout.screens[i];
+        if (screen.curvatureRad > 0.0f)
+        {
+            m_renderer->InitCurvedScreen(i, screen.sizeMeters.x, screen.sizeMeters.y, screen.curvatureRad, screen.curveSegments);
+        }
+    }
+
+    // 11. 创建预览窗口
+    CreatePreviewWindow();
+    m_renderer->InitPreview(m_previewHwnd, m_previewW, m_previewH);
+
+    // 12. 初始化 ImGui 设置面板
+    m_gui = std::make_unique<SettingsGUI>();
+    auto* ctx = m_renderer->GetContext();
+    m_gui->Init(m_hwnd, device, ctx);
+
+    // 13. 初始化预览 HUD
+    m_gui->InitPreviewHud(m_renderer->GetPreviewDevice(), m_renderer->GetPreviewContext(), m_previewHwnd);
 
     // 14. 初始化 IMU（如果启用）
     if (m_config.imu.enabled)
@@ -219,6 +226,11 @@ bool Application::Init(bool noPopup)
 
 void Application::Tick()
 {
+    // 首帧诊断日志
+    static int s_tickCount = 0;
+    s_tickCount++;
+    if (s_tickCount <= 2) LOG_INFO("Tick #%d: start", s_tickCount);
+
     // 1. 性能统计
     m_frameCount++;
     auto now = std::chrono::high_resolution_clock::now();
@@ -258,7 +270,7 @@ void Application::Tick()
     }
 
     // 5. 屏幕捕获
-        m_captureMgr->CaptureAll(m_renderer->GetContext());
+    m_captureMgr->CaptureAll(m_renderer->GetContext());
 
     // 6. 更新纹理
     for (int i = 0; i < static_cast<int>(m_config.layout.screens.size()); ++i)
@@ -269,8 +281,11 @@ void Application::Tick()
         }
     }
 
+    if (s_tickCount <= 2) LOG_INFO("Tick: 捕获+纹理更新完成");
+
     // 7. 开始渲染帧
     m_renderer->BeginFrame();
+    if (s_tickCount <= 2) LOG_INFO("Tick: BeginFrame 完成");
 
     // 8. 计算 View-Projection 矩阵（52° FOV）
     float fovY = 52.0f * 3.14159265f / 180.0f;
@@ -297,26 +312,35 @@ void Application::Tick()
 
     // 11. 结束主窗口渲染
     m_renderer->EndFrame();
+    if (s_tickCount <= 2) LOG_INFO("Tick: EndFrame 完成");
 
     // 12. 更新 GUI 显示数据（修复时序：先更新再渲染）
     m_gui->SetFps(m_fps);
+    if (s_tickCount <= 2) LOG_INFO("Tick: SetFps done");
     if (m_airIMU)
     {
         ImuData imu = m_airIMU->GetLatest();
         m_gui->SetImuData(imu.pitch, imu.yaw, imu.roll);
     }
+    if (s_tickCount <= 2) LOG_INFO("Tick: SetImuData done");
     m_gui->SetCameraMode(m_camera.GetMode() == CameraMode::HeadLock ? "HeadLock" : "Free");
     m_gui->SetCaptureCount(static_cast<int>(m_captureMgr->GetCount()));
     m_gui->SetScreenCount(static_cast<int>(m_config.layout.screens.size()));
     m_gui->SetLayoutName(m_config.layout.name);
     m_gui->SetRenderingPaused(m_renderingPaused);
+    if (s_tickCount <= 2) LOG_INFO("Tick: GUI data updated");
 
     // 13. 预览窗口
     if (m_renderer->IsPreviewReady())
     {
+        if (s_tickCount <= 2) LOG_INFO("Tick: RenderPreviewHud start");
         m_gui->RenderPreviewHud();
+        if (s_tickCount <= 2) LOG_INFO("Tick: PresentPreview start");
         m_renderer->PresentPreview();
     }
+    if (s_tickCount <= 2) LOG_INFO("Tick: preview done");
+
+    if (s_tickCount <= 2) LOG_INFO("Tick: 首帧完成");
 
     // 定期更新托盘提示
     auto tooltipNow = std::chrono::steady_clock::now();
@@ -326,6 +350,8 @@ void Application::Tick()
         UpdateTrayTooltip();
         m_lastTooltipUpdate = tooltipNow;
     }
+
+    if (s_tickCount <= 2) LOG_INFO("Tick #%d: end", s_tickCount);
 }
 
 // ============================================================
@@ -606,7 +632,7 @@ LRESULT Application::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 // CreateMainWindow - 创建主渲染窗口
 // ============================================================
 
-bool Application::CreateMainWindow(bool noPopup)
+bool Application::CreateMainWindow(bool noPopup, int displayIndex)
 {
     // 注册窗口类
     WNDCLASSEXW wc = {};
@@ -619,14 +645,44 @@ bool Application::CreateMainWindow(bool noPopup)
     wc.lpszClassName = L"NrealSpatialDisplay";
     RegisterClassExW(&wc);
 
-    // 使用 DXGI 枚举所有显示器输出，寻找 Nreal Light
-    // 策略：第一轮找 "light"/"nreal"，第二轮取第一个非虚拟显示器
+    // 如果用户指定了 --display N，直接用 Win32 选择该显示器
     bool foundNreal = false;
     struct OutputInfo { int adapterIdx; int outputIdx; RECT rect; std::wstring name; };
     OutputInfo nrealOutput = {};
+
+    if (displayIndex >= 0)
+    {
+        struct MonitorCtx { int targetIdx; int currentIdx; RECT rect; bool found; };
+        MonitorCtx ctx = { displayIndex, 0, {}, false };
+        EnumDisplayMonitors(nullptr, nullptr,
+            [](HMONITOR, HDC, LPRECT lprc, LPARAM dw) -> BOOL {
+                auto* c = reinterpret_cast<MonitorCtx*>(dw);
+                if (c->currentIdx == c->targetIdx) { c->rect = *lprc; c->found = true; return FALSE; }
+                c->currentIdx++; return TRUE;
+            }, reinterpret_cast<LPARAM>(&ctx));
+
+        if (ctx.found) {
+            int w = ctx.rect.right - ctx.rect.left;
+            int h = ctx.rect.bottom - ctx.rect.top;
+            m_nrealDisplay.found = true;
+            m_nrealDisplay.width = w; m_nrealDisplay.height = h;
+            m_nrealDisplay.posX = ctx.rect.left; m_nrealDisplay.posY = ctx.rect.top;
+            m_hwnd = CreateWindowExW(WS_EX_TOPMOST,
+                L"NrealSpatialDisplay", L"NrealSpatialDisplay", WS_POPUP,
+                ctx.rect.left, ctx.rect.top, w, h,
+                nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+            foundNreal = true;
+            LOG_INFO("使用 --display %d: (%dx%d @ %d,%d)", displayIndex, w, h, ctx.rect.left, ctx.rect.top);
+        } else {
+            LOG_WARN("--display %d 无效，共 %d 个显示器", displayIndex, ctx.currentIdx);
+        }
+    }
+
+    // 自动检测：DXGI 枚举（仅在未指定 --display 时）
     OutputInfo fallbackOutput = {};
     bool hasFallback = false;
 
+    if (!foundNreal) {
     IDXGIFactory* pFactory = nullptr;
     if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&pFactory)))
     {
@@ -689,6 +745,7 @@ bool Application::CreateMainWindow(bool noPopup)
         nrealOutput = fallbackOutput;
         foundNreal = true;
     }
+    } // end if (!foundNreal) - DXGI block
 
     if (foundNreal)
     {
@@ -712,7 +769,57 @@ bool Application::CreateMainWindow(bool noPopup)
         LOG_INFO("全屏窗口: %ls (%dx%d @ %d,%d)", nrealOutput.name.c_str(), w, h, x, y);
     }
 
-    // 未找到 Nreal 显示器，使用窗口模式 1920x1080
+    // Win32 回退：用 EnumDisplayMonitors 枚举真实显示器
+    if (!foundNreal)
+    {
+        struct MonitorEnumCtx { int targetIdx; int currentIdx; RECT rect; bool found; };
+        MonitorEnumCtx ctx = { displayIndex, 0, {}, false };
+
+        EnumDisplayMonitors(nullptr, nullptr,
+            [](HMONITOR, HDC, LPRECT lprcMonitor, LPARAM dwData) -> BOOL {
+                auto* c = reinterpret_cast<MonitorEnumCtx*>(dwData);
+                if (c->targetIdx >= 0) {
+                    // 用户指定了显示器编号
+                    if (c->currentIdx == c->targetIdx) {
+                        c->rect = *lprcMonitor;
+                        c->found = true;
+                        return FALSE;
+                    }
+                } else {
+                    // 自动：跳过主显示器（0,0），找第二个
+                    if (c->currentIdx > 0) {
+                        c->rect = *lprcMonitor;
+                        c->found = true;
+                        return FALSE;
+                    }
+                }
+                c->currentIdx++;
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&ctx));
+
+        if (ctx.found) {
+            int w = ctx.rect.right - ctx.rect.left;
+            int h = ctx.rect.bottom - ctx.rect.top;
+            int x = ctx.rect.left;
+            int y = ctx.rect.top;
+
+            m_nrealDisplay.found = true;
+            m_nrealDisplay.width = w;
+            m_nrealDisplay.height = h;
+            m_nrealDisplay.posX = x;
+            m_nrealDisplay.posY = y;
+
+            m_hwnd = CreateWindowExW(WS_EX_TOPMOST,
+                L"NrealSpatialDisplay", L"NrealSpatialDisplay", WS_POPUP,
+                x, y, w, h,
+                nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+
+            foundNreal = true;
+            LOG_INFO("Win32 回退: 显示器[%d] (%dx%d @ %d,%d)", ctx.currentIdx, w, h, x, y);
+        }
+    }
+
+    // 仍未找到，使用窗口模式 1920x1080
     if (!foundNreal)
     {
         LOG_WARN("未找到 Nreal 显示器，使用窗口模式 1920x1080");

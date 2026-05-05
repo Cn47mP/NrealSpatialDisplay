@@ -190,10 +190,10 @@ bool DisplayCapture::InitGDI(ID3D11Device* device) {
     m_bmi.bmiHeader.biPlanes = 1;
     m_bmi.bmiHeader.biBitCount = 32;
     m_bmi.bmiHeader.biCompression = BI_RGB;
-    m_hBitmap = CreateDIBSection(m_hdcMem, &m_bmi, DIB_RGB_COLORS, (void**)&m_frameBuffer, nullptr, 0);
+    void* dibBits = nullptr;
+    m_hBitmap = CreateDIBSection(m_hdcMem, &m_bmi, DIB_RGB_COLORS, &dibBits, nullptr, 0);
     SelectObject(m_hdcMem, m_hBitmap);
-
-    m_frameBuffer.resize(m_width * m_height * 4);
+    m_dibBits = static_cast<BYTE*>(dibBits);
 
     LOG_INFO("DisplayCapture: Source #%d using GDI capture (%ux%u)", m_displayIndex, m_width, m_height);
 
@@ -371,18 +371,18 @@ bool DisplayCapture::UpdateWGCFrame(ID3D11DeviceContext* ctx) {
 }
 
 bool DisplayCapture::UpdateGDIFrame(ID3D11DeviceContext* ctx) {
-    // 捕获屏幕到DIB段
+    if (!m_dibBits) return false;
+
     BitBlt(m_hdcMem, 0, 0, m_width, m_height, m_hdcScreen, 0, 0, SRCCOPY);
 
-    // 拷贝到staging纹理
     D3D11_MAPPED_SUBRESOURCE mapped;
-    if (FAILED(ctx->Map(m_stagingTexture.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+    if (FAILED(ctx->Map(m_stagingTexture.Get(), 0, D3D11_MAP_WRITE, 0, &mapped))) {
         return false;
     }
 
     BYTE* dst = (BYTE*)mapped.pData;
     for (UINT y = 0; y < m_height; y++) {
-        memcpy(dst + y * mapped.RowPitch, m_frameBuffer.data() + y * m_width * 4, m_width * 4);
+        memcpy(dst + y * mapped.RowPitch, m_dibBits + y * m_width * 4, m_width * 4);
     }
 
     ctx->Unmap(m_stagingTexture.Get(), 0);
@@ -407,6 +407,7 @@ void DisplayCapture::Shutdown() {
     m_cachedTexture.Reset();
     m_stagingTexture.Reset();
     m_hasFrame = false;
+    m_dibBits = nullptr;
     m_initialized = false;
     m_dxgiDevice.Reset();
 }
@@ -441,7 +442,7 @@ bool DisplayCapture::UpdateSimulatedFrame(ID3D11DeviceContext* ctx) {
     frameCounter++;
 
     D3D11_MAPPED_SUBRESOURCE mapped;
-    if (FAILED(ctx->Map(m_cachedTexture.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+    if (FAILED(ctx->Map(m_stagingTexture.Get(), 0, D3D11_MAP_WRITE, 0, &mapped))) {
         return false;
     }
 
@@ -465,6 +466,7 @@ bool DisplayCapture::UpdateSimulatedFrame(ID3D11DeviceContext* ctx) {
         }
     }
 
-    ctx->Unmap(m_cachedTexture.Get(), 0);
+    ctx->Unmap(m_stagingTexture.Get(), 0);
+    ctx->CopyResource(m_cachedTexture.Get(), m_stagingTexture.Get());
     return true;
 }

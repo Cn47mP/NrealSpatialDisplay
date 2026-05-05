@@ -45,7 +45,7 @@ private:
     HDC m_hdcMem = nullptr;
     HBITMAP m_hBitmap = nullptr;
     BITMAPINFO m_bmi = {};
-    std::vector<BYTE> m_frameBuffer;
+    BYTE* m_dibBits = nullptr;
 
     // WGC捕获
     bool m_wgcActive = false;

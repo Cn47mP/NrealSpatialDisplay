@@ -27,6 +27,8 @@ public:
     void CaptureAll(ID3D11DeviceContext* ctx);
     ID3D11Texture2D* GetTexture(size_t index) const;
     size_t GetCount() const { return m_captures.size(); }
+    uint32_t GetSourceWidth(size_t i) const { return i < m_captures.size() ? m_captures[i]->GetWidth() : 0; }
+    uint32_t GetSourceHeight(size_t i) const { return i < m_captures.size() ? m_captures[i]->GetHeight() : 0; }
 
     bool ReinitCapture(int index);
     void ReinitAll();

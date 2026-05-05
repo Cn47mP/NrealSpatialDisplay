@@ -326,13 +326,19 @@ bool D3DRenderer::InitPreview(HWND previewHwnd, UINT w, UINT h) {
 }
 
 bool D3DRenderer::InitScreenResources(int screenCount) {
+    std::vector<std::pair<UINT, UINT>> sizes(screenCount, {m_offscreenW, m_offscreenH});
+    return InitScreenResources(sizes);
+}
+
+bool D3DRenderer::InitScreenResources(const std::vector<std::pair<UINT, UINT>>& sizes) {
+    int screenCount = static_cast<int>(sizes.size());
     m_textures.resize(screenCount);
     m_srvs.resize(screenCount);
 
     for (int i = 0; i < screenCount; ++i) {
         D3D11_TEXTURE2D_DESC desc = {};
-        desc.Width = m_offscreenW;
-        desc.Height = m_offscreenH;
+        desc.Width = sizes[i].first;
+        desc.Height = sizes[i].second;
         desc.MipLevels = 1;
         desc.ArraySize = 1;
         desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -342,6 +348,8 @@ bool D3DRenderer::InitScreenResources(int screenCount) {
 
         HR_CHECK_RET(m_device->CreateTexture2D(&desc, nullptr, &m_textures[i]));
         HR_CHECK_RET(m_device->CreateShaderResourceView(m_textures[i].Get(), nullptr, &m_srvs[i]));
+
+        LOG_INFO("D3DRenderer: Screen texture[%d] = %ux%u", i, sizes[i].first, sizes[i].second);
     }
 
     LOG_INFO("D3DRenderer: Created %d screen textures", screenCount);

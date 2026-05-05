@@ -1,6 +1,18 @@
 #include "AirIMU.h"
 #include "../utils/Log.h"
 
+// SEH wrapper: call a function pointer safely, return defaultVal on crash
+template<typename Ret, typename Fn, typename... Args>
+static Ret SafeCall(Fn fn, Ret defaultVal, Args... args) {
+    Ret result = defaultVal;
+    __try {
+        result = fn(args...);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        LOG_ERROR("SafeCall: function crashed (exception 0x%08X)", GetExceptionCode());
+    }
+    return result;
+}
+
 bool AirIMU::TryLoadAirAPIDLL() {
     const char* paths[] = {
         "AirAPI_Windows.dll",
@@ -50,8 +62,13 @@ bool AirIMU::TryConnectAirAPI() {
     LOG_INFO("AirIMU: Attempting connection...");
 
     if (StartConnection) {
-        int result = StartConnection();
+        int result = SafeCall<int>(StartConnection, -999);
         LOG_INFO("AirIMU: StartConnection() returned %d", result);
+        if (result == -999) {
+            LOG_ERROR("AirIMU: StartConnection() crashed");
+            m_connected = false;
+            return false;
+        }
         if (result < 0) {
             LOG_WARN("AirIMU: StartConnection failed with code %d", result);
             m_connected = false;
@@ -117,8 +134,8 @@ void AirIMU::PollLoop() {
         bool success = false;
 
         if (m_hasAirAPI && GetQuaternion && GetEuler) {
-            float* quat = GetQuaternion();
-            float* euler = GetEuler();
+            float* quat = SafeCall<float*>(GetQuaternion, nullptr);
+            float* euler = SafeCall<float*>(GetEuler, nullptr);
 
             if (quat && euler) {
                 data.quatX = quat[0];

@@ -40,7 +40,7 @@ public:
     Application();
     ~Application();
 
-    bool Init(bool noPopup = false);
+    bool Init(bool noPopup = false, int displayIndex = -1);
     void Shutdown();
     void Tick();
     void HandleAction(const std::string& action);
@@ -52,7 +52,7 @@ public:
     LRESULT WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
-    bool CreateMainWindow(bool noPopup = false);
+    bool CreateMainWindow(bool noPopup = false, int displayIndex = -1);
     bool CreatePreviewWindow();
     void TakeScreenshot();
 

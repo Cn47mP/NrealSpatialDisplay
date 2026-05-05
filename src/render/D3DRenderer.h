@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <utility>
 #include "ScreenQuad.h"
 
 using Microsoft::WRL::ComPtr;
@@ -27,6 +28,7 @@ public:
     bool Init(HWND glassesHwnd, UINT width, UINT height);
     bool InitPreview(HWND previewHwnd, UINT w, UINT h);
     bool InitScreenResources(int screenCount);
+    bool InitScreenResources(const std::vector<std::pair<UINT, UINT>>& sizes);
     bool InitCurvedScreen(int index, float width, float height,
                           float curvature, int segments);
     void Shutdown();
