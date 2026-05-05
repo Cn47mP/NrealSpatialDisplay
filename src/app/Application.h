@@ -72,6 +72,7 @@ private:
     UINT m_previewH = 540;
 
     AppConfig m_config;
+    std::string m_configPath;
     std::unique_ptr<D3DRenderer> m_renderer;
     std::unique_ptr<CaptureManager> m_captureMgr;
     std::unique_ptr<AirIMU> m_airIMU;

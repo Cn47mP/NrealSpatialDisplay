@@ -23,6 +23,15 @@
 #include <sstream>
 #include <algorithm>
 #include <shellapi.h>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+static std::string GetExeDir() {
+    char buf[MAX_PATH] = {};
+    GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    return fs::path(buf).parent_path().string();
+}
 
 // 系统托盘消息
 #define WM_TRAYICON (WM_APP + 1)
@@ -72,15 +81,18 @@ bool Application::Init(bool noPopup, int displayIndex)
         return false;
     }
 
-    // 2. 日志系统
-    Log::Init("logs");
+    // 2. 日志系统（基于 exe 目录）
+    std::string exeDir = GetExeDir();
+    Log::Init(exeDir + "/logs");
     LOG_INFO("NrealSpatialDisplay 启动中...");
 
     // 3. 注册布局预设
     LayoutPreset::RegisterPresets();
 
-    // 4. 加载配置
-    m_config = AppConfig::Load("config/default.json");
+    // 4. 加载配置（基于 exe 目录）
+    std::string configPath = exeDir + "/config/default.json";
+    m_config = AppConfig::Load(configPath);
+    m_configPath = configPath;
     LOG_INFO("配置加载完成，布局: %s", m_config.layout.name.c_str());
 
     // 5. 缓存热键列表
@@ -198,7 +210,7 @@ bool Application::Init(bool noPopup, int displayIndex)
     });
         m_gui->OnConfigChanged([this](const AppConfig& cfg) {
             m_config = cfg;
-            m_config.Save("config/default.json");
+            m_config.Save(m_configPath);
             SwitchLayout(cfg.layout.name);
         });
     m_gui->OnLayoutSwitch([this](const std::string& name) {

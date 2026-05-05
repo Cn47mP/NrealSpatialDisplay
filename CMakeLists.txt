@@ -82,6 +82,17 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
 )
 
+# 复制 config/ 到 exe 所在目录
+if(EXISTS "${CMAKE_SOURCE_DIR}/config/default.json")
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/config/default.json"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/default.json"
+        COMMENT "Copying config/default.json"
+    )
+endif()
+
 # 复制运行时 DLL 到 exe 所在目录
 if(EXISTS "${CMAKE_SOURCE_DIR}/airapi/hidapi-win/x64/hidapi.dll")
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

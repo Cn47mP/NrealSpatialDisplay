@@ -46,11 +46,15 @@ namespace Log {
 
     inline void CleanupOldLogs(const std::string& dir, int keepDays) {
         try {
+            auto now = fs::file_time_type::clock::now();
             for (const auto& entry : fs::directory_iterator(dir)) {
                 if (!entry.is_regular_file()) continue;
                 std::string filename = entry.path().filename().string();
                 if (filename.find("nreal_") != 0 || filename.find(".log") == std::string::npos) continue;
-                DeleteFileA(entry.path().string().c_str());
+                auto age = now - entry.last_write_time();
+                if (age > std::chrono::hours(24 * keepDays)) {
+                    DeleteFileA(entry.path().string().c_str());
+                }
             }
         } catch (...) {}
     }

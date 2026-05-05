@@ -65,18 +65,28 @@ AppConfig AppConfig::Load(const std::string& path) {
             cfg.display.nrealName = d.value("nrealName", cfg.display.nrealName);
             cfg.display.virtualCount = d.value("virtualCount", cfg.display.virtualCount);
         }
-        if (j.contains("hotkeys") && j["hotkeys"].is_array()) {
-            cfg.hotkeys.entries.clear();
-            for (const auto& hk : j["hotkeys"]) {
-                HotkeyEntry entry;
-                entry.id = hk.value("name", "");
-                entry.name = hk.value("label", "");
-                entry.key = hk.value("vk", 0);
-                entry.ctrl = hk.value("ctrl", true);
-                entry.alt = hk.value("alt", true);
-                entry.shift = hk.value("shift", false);
-                if (!entry.id.empty()) {
-                    cfg.hotkeys.entries.push_back(entry);
+        if (j.contains("hotkeys")) {
+            const json& hotkeysNode = j["hotkeys"];
+            // 支持两种格式: 直接数组 或 {"entries": [...]}
+            const json* arr = nullptr;
+            if (hotkeysNode.is_array()) {
+                arr = &hotkeysNode;
+            } else if (hotkeysNode.is_object() && hotkeysNode.contains("entries") && hotkeysNode["entries"].is_array()) {
+                arr = &hotkeysNode["entries"];
+            }
+            if (arr) {
+                cfg.hotkeys.entries.clear();
+                for (const auto& hk : *arr) {
+                    HotkeyEntry entry;
+                    entry.id = hk.value("id", "");
+                    entry.name = hk.value("name", "");
+                    entry.key = hk.value("key", hk.value("vk", 0));
+                    entry.ctrl = hk.value("ctrl", true);
+                    entry.alt = hk.value("alt", true);
+                    entry.shift = hk.value("shift", false);
+                    if (!entry.id.empty()) {
+                        cfg.hotkeys.entries.push_back(entry);
+                    }
                 }
             }
         }
@@ -115,6 +125,20 @@ void AppConfig::Save(const std::string& path) const {
         j["hud"] = {
             {"enabled", hud.enabled}
         };
+        {
+            json hkArr = json::array();
+            for (const auto& entry : hotkeys.entries) {
+                hkArr.push_back({
+                    {"id", entry.id},
+                    {"name", entry.name},
+                    {"key", entry.key},
+                    {"ctrl", entry.ctrl},
+                    {"alt", entry.alt},
+                    {"shift", entry.shift}
+                });
+            }
+            j["hotkeys"] = {{"entries", hkArr}};
+        }
         file << j.dump(2);
         LOG_INFO("Config saved: %s", path.c_str());
     } catch (const std::exception& e) {

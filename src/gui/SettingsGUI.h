@@ -4,6 +4,7 @@
 #include <string>
 #include <functional>
 #include "../app/AppConfig.h"
+#include "imgui.h"
 
 using ToggleCallback = std::function<void(bool)>;
 using ConfigChangedCallback = std::function<void(const AppConfig&)>;
@@ -57,6 +58,7 @@ private:
     void RenderHUD();
 
     bool m_initialized = false;
+    bool m_previewInitialized = false;
     bool m_enabled = true;
     bool m_windowVisible = false;
     bool m_hudVisible = true;
@@ -66,6 +68,13 @@ private:
     HWND m_hwnd = nullptr;
     ID3D11Device* m_device = nullptr;
     ID3D11DeviceContext* m_deviceContext = nullptr;
+
+    // 预览窗口独立的 ImGui 上下文
+    ImGuiContext* m_mainCtx = nullptr;
+    ImGuiContext* m_previewCtx = nullptr;
+    HWND m_previewHwnd = nullptr;
+    ID3D11Device* m_previewDevice = nullptr;
+    ID3D11DeviceContext* m_previewDeviceCtx = nullptr;
 
     bool m_imuConnected = false;
     float m_pitch = 0.0f, m_yaw = 0.0f, m_roll = 0.0f;

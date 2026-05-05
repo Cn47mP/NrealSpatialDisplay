@@ -20,7 +20,7 @@ bool SettingsGUI::Init(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* ctx
 
     if (!s_imguiInitialized) {
         IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
+        m_mainCtx = ImGui::CreateContext();
         ImGui::StyleColorsDark();
 
         if (!ImGui_ImplWin32_Init(hwnd)) {
@@ -38,15 +38,57 @@ bool SettingsGUI::Init(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* ctx
 }
 
 bool SettingsGUI::InitPreviewHud(ID3D11Device* dev, ID3D11DeviceContext* ctx, HWND hwnd) {
-    return Init(hwnd, dev, ctx);
+    if (!hwnd || !dev || !ctx) {
+        LOG_WARN("SettingsGUI: Invalid preview params");
+        return false;
+    }
+
+    m_previewHwnd = hwnd;
+    m_previewDevice = dev;
+    m_previewDeviceCtx = ctx;
+
+    // 创建独立的 ImGui 上下文用于预览 HUD
+    m_previewCtx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(m_previewCtx);
+    ImGui::StyleColorsDark();
+
+    if (!ImGui_ImplWin32_Init(hwnd)) {
+        LOG_ERROR("SettingsGUI: Preview Win32 init failed");
+        return false;
+    }
+    if (!ImGui_ImplDX11_Init(dev, ctx)) {
+        LOG_ERROR("SettingsGUI: Preview DX11 init failed");
+        return false;
+    }
+
+    // 切回主窗口上下文
+    if (m_mainCtx) ImGui::SetCurrentContext(m_mainCtx);
+
+    m_previewInitialized = true;
+    LOG_INFO("SettingsGUI: Preview HUD ImGui initialized");
+    return true;
 }
 
 void SettingsGUI::Shutdown() {
-    if (m_initialized) {
+    // 清理预览上下文
+    if (m_previewInitialized && m_previewCtx) {
+        ImGui::SetCurrentContext(m_previewCtx);
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
+        ImGui::DestroyContext(m_previewCtx);
+        m_previewCtx = nullptr;
+        m_previewInitialized = false;
+        ImGui::SetCurrentContext(nullptr);
+    }
+    // 清理主窗口上下文
+    if (m_initialized && m_mainCtx) {
+        ImGui::SetCurrentContext(m_mainCtx);
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext(m_mainCtx);
+        m_mainCtx = nullptr;
         s_imguiInitialized = false;
+        ImGui::SetCurrentContext(nullptr);
     }
     m_initialized = false;
     LOG_INFO("SettingsGUI: Shutdown");
@@ -202,7 +244,15 @@ void SettingsGUI::RenderSettingsWindow() {
 }
 
 void SettingsGUI::RenderPreviewHud() {
-    if (!m_hudVisible) return;
+    if (!m_hudVisible || !m_previewInitialized) return;
+
+    // 切换到预览窗口的 ImGui 上下文
+    ImGuiContext* prevCtx = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(m_previewCtx);
+
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
 
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.6f);
@@ -231,6 +281,11 @@ void SettingsGUI::RenderPreviewHud() {
     }
 
     ImGui::End();
+    ImGui::Render();
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+    // 切回主窗口上下文
+    ImGui::SetCurrentContext(prevCtx);
 }
 
 std::string SettingsGUI::FormatHotkey(const HotkeyEntry& e) {
