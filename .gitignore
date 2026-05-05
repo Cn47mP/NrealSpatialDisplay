@@ -28,6 +28,9 @@ lib/
 src/gui/imgui/
 airapi/AirAPI_Windows-master/
 
+# Claude Code
+.claude/
+
 # 临时文件
 *.tmp
 *.temp
